@@ -1,0 +1,3 @@
+"group","criterion"
+"BIO14 +","two largest groups with >=25 SNPs and positive climate-added held-out RMSE improvement in all four folds"
+"BIO13 -","two largest groups with >=25 SNPs and positive climate-added held-out RMSE improvement in all four folds"

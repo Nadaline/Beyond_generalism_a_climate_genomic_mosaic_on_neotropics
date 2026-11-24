@@ -1,0 +1,5 @@
+Model,Adjusted R²,Global P,SNPs  candidates
+Genomic PC control,0.0155,0.001,"1,106"
+Genomic PC and geographic control,0.0132,0.001,"1,032"
+sNMF ancestry and geographic control,0.0133,0.001,986
+Unconditioned sensitivity,0.2148,0.001,NA

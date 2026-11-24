@@ -1,0 +1,9 @@
+method_or_metric,count
+pRDA PCA and geography,1032
+pRDA sNMF and geography,986
+Spatial pRDA consensus,889
+Strict 3SD consensus,626
+LFMM2 per-predictor FDR union,314
+RDA and LFMM2 intersection,164
+Controlled GF upper OOB R2 group,707
+GF computational batches,32
