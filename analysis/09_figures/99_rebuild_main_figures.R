@@ -1,8 +1,4 @@
-###############################################################################
-# Reconstrucao leve das quatro pranchas principais e dos graficos finais de
-# offset. Este script NAO refaz as analises: le somente resultados auditados do
-# HD externo e imagens ggplot produzidas por RDA-2027.R.
-###############################################################################
+# 1. Load packages, stored results and plotting functions ----
 
 library(ggplot2)
 library(cowplot)
@@ -82,7 +78,7 @@ save_plate <- function(plot, filename, width, height) {
   )
 }
 
-# Graficos 26 e 28 sao refeitos diretamente das tabelas espaciais salvas.
+# 2. Plot RDAforest offsets and climatic-domain coverage ----
 offsets <- read.csv(file.path(
   rf_spatial, "21_RDAforest_original_offset_pixels.csv"
 ))
@@ -137,8 +133,7 @@ ggsave(
   plot_domain, width = 11, height = 5.5, dpi = 400, bg = "white"
 )
 
-# Reconstroi a comparacao 27 pela extracao dos rasters GF e RDA exatamente nas
-# coordenadas dos pixels RDAforest.
+# 3. Compare RDAforest, RDA and GF on matched grid coordinates ----
 compare_period <- function(period_name, gf_file, rda_file) {
   period_data <- subset(offsets, period == period_name)
   gf <- rast(file.path(spatial, gf_file))
@@ -198,7 +193,7 @@ ggsave(
   plot_comparison, width = 10, height = 5.5, dpi = 400, bg = "white"
 )
 
-# Reconstroi somente o mapa presente do RDAforest a partir do ajuste combinado.
+# 4. Reconstruct the present-day RDAforest landscape ----
 grid_data <- readRDS(file.path(rf_spatial, "21_RDAforest_spatial_grid.rds"))
 combined_fit <- readRDS(file.path(
   rf_spatial, "21_RDAforest_combined_ordinationJackknife.rds"
@@ -245,7 +240,7 @@ plot_rda_forest_present <- ggplot(
     x = "Longitude", y = "Latitude"
   )
 
-# Titulo abreviado para manter o painel candidato legivel na prancha tripla.
+# 5. Plot genotype clusters from shared linear candidates ----
 mosaic <- read.csv(file.path(
   results, "13_adaptive_mosaic_genotype_clusters.csv"
 ))
@@ -267,6 +262,7 @@ ggsave(
   dpi = 400, bg = "white"
 )
 
+# 6. Calculate relative genomic offset and spatial agreement ----
 rank01 <- function(x) (rank(x, ties.method = "average") - 1) / (length(x) - 1)
 offset_comparison$linear_rank <- ave(
   offset_comparison$RDA, offset_comparison$period, FUN = rank01
@@ -373,7 +369,7 @@ plot_concordance <- ggplot(
     x = "Longitude", y = "Latitude", colour = "Spatial reading"
   )
 
-# Prancha 1: dois paineis superiores e uma barra sNMF ocupando toda a base.
+# 7. Assemble and export the four composite figures ----
 figure_1_top <- plot_grid(
   image_panel("32_population_sampling_map.png"),
   image_panel("02_PCA_sNMF_structure.png"),

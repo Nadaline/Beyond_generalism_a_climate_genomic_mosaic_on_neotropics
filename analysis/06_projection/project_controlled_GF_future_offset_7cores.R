@@ -1,10 +1,5 @@
-###############################################################################
-# CONTROLLED WHOLE-PANEL GF — FUTURE OFFSET POST-PROCESSING
-# Reuses the completed 32 controlled 14,134-SNP GF blocks. No GF is refitted.
-# Up to seven worker processes transform independent climatic predictors.
-###############################################################################
 
-#### 1. INPUTS, SAVED MODEL COMPONENTS AND OUTPUT DIRECTORY ####
+# 1. Read controlled Gradient Forest curves, climate data and raster template ----
 
 library(terra)
 library(parallel)
@@ -39,11 +34,10 @@ lineage <- c(
 )
 writeLines(lineage, file.path(out, "GF_controlled_future_offset_lineage.txt"))
 
-#### 2. TRANSFORM THE SAVED FUTURE CLIMATE RASTERS ####
+# 2. Transform present and future climatic rasters ----
 
-# Each worker handles one independent predictor through all three already saved
-# climatic periods. The original 1/120-degree CHELSA layers are cropped,
-# aggregated by five, and masked exactly as the existing spatial workflow.
+# Each worker transforms one predictor across the three climatic periods.
+# Aggregate the CHELSA layers by five and align them to the reference grid.
 transform_one_predictor <- function(predictor) {
   observed <- environment[[paste0("X.CHELSA_", predictor, "_1981.2010_SA")]]
   observed <- sort(observed[is.finite(observed)])
@@ -60,9 +54,9 @@ transform_one_predictor <- function(predictor) {
     stopifnot(compareGeom(raw, template, stopOnError = FALSE))
     raw <- mask(raw, template)
 
-    # The existing RDA/GF projection-domain convention allows a 10% buffer for
-    # present climate and a 20% buffer for future climate. Values outside it are
-    # retained as NA in the final offset, never extrapolated into the figure.
+    # Allow 10% of the observed predictor range beyond present-day limits and 20%
+    # for future climate. Clamp values to curve endpoints and exclude cells beyond
+    # the allowed range from the offset calculation.
     buffer <- if (period == "1981-2010") .10 else .20
     outside_allowed <- raw < (min(observed) - buffer * span) | raw > (max(observed) + buffer * span)
     ecdf_raster <- app(raw, function(v) approx(observed, probability, xout = v, rule = 2, ties = "ordered")$y)
@@ -81,7 +75,7 @@ transformed_files <- mclapply(predictors, transform_one_predictor, mc.cores = wo
 names(transformed_files) <- predictors
 stopifnot(all(vapply(transformed_files, function(x) all(file.exists(x)), logical(1))))
 
-#### 3. OFFSET AND SUPPORTED-PROJECTION DOMAIN ####
+# 3. Calculate genomic offset within the supported climatic domain ----
 
 stack_for_period <- function(period) {
   rast(vapply(transformed_files, function(x) x[which(periods == period)], character(1)))
@@ -101,6 +95,7 @@ allowed_late <- allowed_for_period("2071-2100")
 allowed_mid_combined <- allowed_present * allowed_mid
 allowed_late_combined <- allowed_present * allowed_late
 
+# Euclidean distance in cumulative-importance space, masked in both periods.
 offset_mid <- sqrt(sum((mid - present)^2)) * allowed_mid_combined
 offset_late <- sqrt(sum((late - present)^2)) * allowed_late_combined
 names(offset_mid) <- "GF_controlled_wholepanel_offset_2041_2070"
@@ -110,6 +105,7 @@ writeRaster(offset_late, file.path(out, "GF_controlled_wholepanel_offset_2071_21
 writeRaster(allowed_mid_combined, file.path(out, "GF_controlled_projection_domain_2041_2070.tif"), overwrite = TRUE)
 writeRaster(allowed_late_combined, file.path(out, "GF_controlled_projection_domain_2071_2100.tif"), overwrite = TRUE)
 
+# 4. Summarise domain coverage and offset distributions ----
 domain_summary <- do.call(rbind, Map(function(period, x) {
   values_x <- values(x, mat = FALSE)
   data.frame(period = period, terrestrial_cells = length(values_x), supported_cells = sum(is.finite(values_x)), excluded_cells = sum(!is.finite(values_x)), excluded_proportion = mean(!is.finite(values_x)))

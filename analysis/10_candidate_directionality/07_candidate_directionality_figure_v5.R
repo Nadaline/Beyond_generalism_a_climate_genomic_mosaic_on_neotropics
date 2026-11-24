@@ -1,8 +1,5 @@
-###############################################################################
-#### FIGURE 2: CANDIDATE DIRECTIONALITY AND GEOGRAPHY ####
-###############################################################################
 
-#### 1. VALIDATED FIGURE INPUTS ####
+# 1. Read candidate group summaries and controlled GF turnover curves ----
 
 library(ggplot2)
 
@@ -29,7 +26,7 @@ stopifnot(nrow(count) == 8L, nrow(heat) == 32L,
           all(is.finite(frequency$mean_ALT_frequency)),
           all(is.finite(bins$mean_ALT_frequency)))
 
-#### 2. DISPLAY DATA; NO MODEL FITTING ####
+# 2. Prepare signed effects, frequency profiles and locality scores ----
 
 heat$group_label <- factor(heat$group_label,
   levels = paste0(count$group, "  ", count$n_SNPs, "/", count$n_RAD_loci))
@@ -48,6 +45,7 @@ frequency$climate_label <- factor(climate_names[frequency$predictor],
 bins$climate_label <- factor(climate_names[bins$predictor],
                              levels = climate_names)
 
+# Standardise multilocus scores within each selected group for the geographic display.
 map_data <- do.call(rbind, lapply(map_selection$group, function(g)
   data.frame(site_scores[, c("longitude", "latitude", "n_individuals")],
              group = g, raw_locality_score = site_scores[[g]])))
@@ -75,7 +73,7 @@ stopifnot(nrow(gf) > 0L, all(is.finite(gf$ecdf)),
           all(is.finite(gf$mean_cumimp)),
           setequal(as.character(unique(gf$predictor)), c("BIO7", "BIO2", "BIO4")))
 
-#### 3. MANUSCRIPT COLOURS AND PRINT-SIZE TYPOGRAPHY ####
+# 3. Define the common figure theme ----
 
 deep <- "#32134F"
 muted <- "#9071AD"
@@ -96,7 +94,7 @@ paper <- theme_classic(base_size = 9.5, base_family = "sans") +
         strip.text = element_text(size = 8.5, face = "bold", colour = deep),
         panel.spacing = grid::unit(3, "mm"))
 
-#### 4. FOUR PRINT-READY PANELS ####
+# 4. Draw association, frequency, geography and turnover panels ----
 
 p_a <- ggplot(heat, aes(predictor, group_label, fill = standardized_beta)) +
   geom_tile(colour = "white", linewidth = .35) +
@@ -165,7 +163,7 @@ p_d <- ggplot(gf, aes(ecdf, mean_cumimp,
        x = "Observed climate ECDF",
        y = "Cumulative split importance") + paper
 
-#### 5. FINAL TWO-COLUMN EXPORT ####
+# 5. Assemble and export the four-panel figure ----
 
 width_mm <- 176
 height_mm <- 234

@@ -1,9 +1,5 @@
-###############################################################################
-# FIGURES 1 AND 2 — EDITORIAL RESTYLING ONLY
-# Reads saved Q, PCA, partial-RDA and candidate-score results. No analysis runs.
-###############################################################################
 
-#### 1. PACKAGES AND PATHS ####
+# 1. Load packages, saved results and plotting functions ----
 
 library(ggplot2)
 library(patchwork)
@@ -46,7 +42,7 @@ save_plate <- function(x, name, width, height) {
   }
 }
 
-#### 2. FIGURE 1 — POPULATION STRUCTURE, WITHOUT SUBTITLES ####
+# 2. Plot sampling geography, genome-wide PCA and sNMF coefficients ----
 
 q <- read.csv(file.path(results, "03_sNMF_Q.csv"), stringsAsFactors = FALSE)
 pca <- read.csv(file.path(results, "04_PCA_14134_scores.csv"), stringsAsFactors = FALSE)
@@ -56,8 +52,7 @@ q <- q[match(pca$InternalID, q$InternalID), ]
 variables <- variables[match(pca$InternalID, variables$InternalID), ]
 stopifnot(identical(q$InternalID, pca$InternalID), identical(variables$InternalID, pca$InternalID), nrow(q) == 245L)
 
-# Percentages are taken from the complete saved PCA eigenspectrum, rather than
-# from the ten score columns exported for plotting.
+# Calculate percentages from the full PCA eigenspectrum, not the exported score columns.
 pca_axis_fraction <- pca_model$CA$eig / sum(pca_model$CA$eig)
 
 q_matrix <- as.matrix(q[, c("V1", "V2", "V3", "V4")])
@@ -106,9 +101,9 @@ figure_1 <- (p1_map + p1_pca) / p1_q +
 save_plate(figure_1, "Main_Figure_1_structure", 13, 10)
 file.copy(file.path(manuscript_figures, "Main_Figure_1_structure.png"), file.path(manuscript_figures, "Figure_1_structure.png"), overwrite = TRUE)
 
-#### 3. FIGURE 2 — LINEAR CANDIDATES, WITHOUT SUBTITLES ####
+# 3. Plot partial RDA, candidate-genotype clusters and projected axes ----
 
-# The existing partial RDA is read from the saved model and merely redrawn.
+# Extract site and biplot scores from the saved partial RDA.
 rda_geo <- readRDS(file.path(results, "07_RDA_PCA_geo.rds"))
 rda_sites <- as.data.frame(scores(rda_geo, display = "sites", choices = 1:2, scaling = 2))
 rda_arrows <- as.data.frame(scores(rda_geo, display = "bp", choices = 1:2, scaling = 2))
@@ -154,13 +149,8 @@ p2_map <- ggplot() +
   labs(title = "Spatial distribution of candidate-genotype clusters", x = "Longitude", y = "Latitude") +
   theme_ameiva() + theme(panel.grid = element_blank())
 
-# Existing present-day RDA axes are read and thinned only for drawing. They are
-# the spatial projection corresponding to the RDA representation in panel a.
-# Raw raster values, the RDA model, and the projections are never modified.
-# Both axes span negative and positive scores, so their display uses a
-# zero-centred diverging scale. Limits are symmetric absolute 2nd--98th
-# percentile limits calculated from each unmodified full-resolution raster;
-# values beyond these limits are visually saturated, not altered.
+# Existing present-day RDA axes use diverging colour scales based on
+# symmetric absolute 2nd–98th percentile limits from each full-resolution axis.
 rda_landscape_file <- file.path(results, "spatial_offset", "18_RDA_present_axes.tif")
 rda_landscape <- terra::rast(rda_landscape_file)
 rda_display_limits <- lapply(1:2, function(i) {
@@ -185,8 +175,6 @@ p2_landscape <- ggplot(rda_landscape_df, aes(x, y, fill = RDA1)) +
   labs(title = "Linear Climate-associated Genomic Landscape", x = "Longitude", y = "Latitude") +
   theme_ameiva() + theme(panel.grid = element_blank())
 
-# The second saved present-day RDA axis is displayed with the same directional
-# identity: low values are purple and high values are orange.
 rda2_landscape_df <- as.data.frame(rda_landscape_plot[[2]], xy = TRUE, na.rm = TRUE)
 names(rda2_landscape_df)[3] <- "RDA2"
 p2_landscape_rda2 <- ggplot(rda2_landscape_df, aes(x, y, fill = RDA2)) +

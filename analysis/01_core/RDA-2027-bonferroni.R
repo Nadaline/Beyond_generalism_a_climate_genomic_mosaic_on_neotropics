@@ -1,14 +1,8 @@
-###############################################################################
-# RDA-2027
-# Mosaico adaptativo em Ameiva ameiva ao longo da America do Sul
-#
-# Script unico, linear e comentado para ser executado linha por linha.
-# Universo principal: 245 individuos e 14.134 SNPs do VCF alinhado ao genoma.
-# Filtro: missing por SNP <= 30% e minor allele count (MAC) >= 3.
-###############################################################################
+# Landscape genomics of Ameiva ameiva
+# Main association panel: 245 individuals and 14,134 SNPs.
 
 
-# 0. PACOTES, CAMINHOS E DECISOES GERAIS ####
+# 0. Load packages, define paths and set analysis options ----
 
 .libPaths(c(normalizePath("R-library"), .libPaths()))
 
@@ -37,8 +31,6 @@ ameiva_world_map <- ggplot2::map_data("world")
 
 set.seed(2027)
 
-# Identidade visual do projeto. Roxo e laranja carregam a informacao; creme e
-# cinza funcionam somente como fundo, valor neutro ou dado excluido.
 idv_purple_dark <- "#2F1647"
 idv_purple <- "#5B2A86"
 idv_purple_light <- "#B99AD0"
@@ -98,20 +90,16 @@ raster_to_ggplot <- function(x, value_name = "value", period = NULL) {
   result
 }
 
-# Falsa-cor para tres eixos. As ancoras tem matizes e luminosidades distintos
-# e continuam separaveis sob deuteranopia, protanopia e tritanopia. A potencia
-# enfatiza o eixo dominante e evita a grande faixa de marrons pouco legiveis
-# produzida por uma mistura RGB linear. A cor e sempre acompanhada por uma
-# chave dos eixos; portanto ela nao e a unica via de interpretacao.
+# Encode three ordination axes in a shared false-colour scale.
 idv_false_colour <- function(red, green, blue) {
   channels <- cbind(red, green, blue)
   channels[!is.finite(channels)] <- 0
   channels[channels < 0] <- 0
   channels[channels > 1] <- 1
   anchors <- t(grDevices::col2rgb(c(
-    "#6A3D9A", # roxo: eixo 1
-    "#E69F00", # laranja: eixo 2 (Okabe-Ito)
-    "#00796B"  # verde-azulado escuro: eixo 3
+    "#6A3D9A", # purple: axis 1
+    "#E69F00", # orange: axis 2 (Okabe-Ito)
+    "#00796B"  # dark teal: axis 3
   )) / 255)
   weights <- channels^1.7 + .015
   mixed <- weights %*% anchors / rowSums(weights)
@@ -164,9 +152,7 @@ adaptation_ggplot_panels <- function(adaptation, environment) {
       theme_ameiva() +
       labs(title = "Neighborhood sizes", x = "Cluster", y = "Cells")
   } else {
-    # plot_adaptation devolve as cores que codificam ate tres eixos. Usamos os
-    # tres canais como pesos para a IDV, preservando mais informacao do que uma
-    # simples recoloracao baseada apenas em PC1 e PC2.
+    # Retain information from all three axes in the colour mapping.
     original_channels <- t(grDevices::col2rgb(adaptation$colors)) / 255
     pc$brand_colour <- idv_false_colour(
       original_channels[, 1],
@@ -258,8 +244,7 @@ figures <- file.path(project, "results", "figures", "RDA-2027-14134")
 dir.create(out, recursive = TRUE, showWarnings = FALSE)
 dir.create(figures, recursive = TRUE, showWarnings = FALSE)
 
-# LEA e TreeMix produzem milhares de linhas. O registro integral fica no HD e
-# nao satura o terminal durante execucoes longas.
+# Save the output of long-running analyses in a log file.
 execution_log <- file.path(out, "00_execution.log")
 execution_connection <- file(execution_log, open = "at")
 sink(execution_connection, split = FALSE)
@@ -270,19 +255,13 @@ stopifnot(file.exists(environment_file))
 stopifnot(file.exists(metadata_file))
 stopifnot(dir.exists(hd))
 
-# TRUE reutiliza somente caches criados por ESTE script. Com FALSE, o fluxo
-# recalcula todas as etapas a partir do VCF, CSV ambiental, GFF e rasters. Em
-# nenhum caso RDA-2027.R depende de objetos .RData/.rds produzidos por outros
-# scripts. Os saveRDS abaixo economizam tempo, mas nunca sao pre-requisitos.
-# Caches puramente geneticos (VCF, PCA e sNMF) continuam validos quando muda a
-# selecao climatica. Caches ambientais recebem a assinatura abaixo.
+# Saved intermediate objects allow the analysis to resume. Environmental
+# model files are identified by the predictor-selection specification.
 USE_SAVED_RDS <- TRUE
-# Esta versao segue o limiar do Script_josue.R/RDA-2026.R: Bonferroni
-# experiment-wise com alpha = 0.01, sem selecionar candidatos por FDR.
+# The partial RDA locus scan uses a family-wise Bonferroni threshold of 0.01.
 ENVIRONMENT_VERSION <- "nonquarter_geoonly_bonferroni_v1"
 
-# FALSE permite preparar e conferir tudo sem iniciar os modulos mais demorados.
-# Definir TRUE depois de conferir os resultados da etapa anterior.
+# Select which analytical modules to run.
 RUN_SNMF <- TRUE
 PREPARE_TREEMIX <- TRUE
 PREPARE_STAIRWAYPLOT2 <- TRUE
@@ -300,7 +279,7 @@ RDAFOREST_PCS_OVERRIDE <- suppressWarnings(as.integer(
 ))
 
 
-# 1. METADADOS AMBIENTAIS ####
+# 1. Read environmental data and individual metadata ----
 
 Variables <- read.csv(
   environment_file,
@@ -318,15 +297,11 @@ Ameiva_metadata <- read.csv(
 stopifnot(all(c("id", "pop") %in% names(Ameiva_metadata)))
 stopifnot(!anyDuplicated(Ameiva_metadata$id))
 
-# Os individuos ainda nao sao escolhidos. Abaixo eles serao derivados do VCF
-# bruto pelos filtros do seu Ameiva_dartRverse.R.
 
 
-# 2. CARREGAMENTO DO VCF E FILTROS DO DARTRVERSE ####
+# 2. Filter the VCF and match individuals to climate data ----
 
-# Sequencia original: VCF -> genlight -> ploidia -> compliance -> metadados ->
-# call rate por locus -> call rate por individuo -> monomorficos -> all-NA.
-# O RDS e apenas um cache no HD. Se faltar, o bloco inteiro roda novamente.
+# Apply locus and individual call-rate filters before removing invariant loci.
 dart_cache_file <- file.path(out, "02_genlight_after_dartR_filters.rds")
 
 if (USE_SAVED_RDS && file.exists(dart_cache_file)) {
@@ -350,15 +325,14 @@ if (USE_SAVED_RDS && file.exists(dart_cache_file)) {
   saveRDS(ref_dart, dart_cache_file)
 }
 
-nInd(ref_dart)                      # esperado: 250 antes do ambiente
+nInd(ref_dart)                      # 250 before matching climate data
 nLoc(ref_dart)
 
-# O painel genetico filtrado tinha cinco individuos sem dados ambientais.
-# Portanto, os 245 sao obtidos pela intersecao, nao por uma lista pronta.
+# Five genetically filtered individuals lack corresponding environmental data.
 ids <- indNames(ref_dart)
 ids <- ids[ids %in% Variables$InternalID]
 
-length(ids)                         # esperado: 245
+length(ids)                         # 245 matched individuals
 stopifnot(length(ids) == 245)
 stopifnot(!anyDuplicated(ids))
 
@@ -379,11 +353,10 @@ write.csv(
 )
 
 
-# 3. FILTRAGEM FLEXIVEL DO PAINEL: 14.134 SNPs ####
+# 3.1 Filter SNPs within the matched set of individuals ----
 
-# O filtro e recalculado depois de manter somente os 245 individuos.
-# MAC >= 3 evita variantes observadas em apenas uma ou duas copias.
-# Missing <= 30% e deliberadamente flexivel para este RADseq de 2016-2017.
+# Recalculate missingness and allele counts after subsetting individuals.
+# Retain loci with at least three copies of each allele and at most 30% missing data.
 
 filtered_vcf <- file.path(out, "02_Ameiva_245_missing30_MAC3.vcf.gz")
 
@@ -402,8 +375,7 @@ if (!USE_SAVED_RDS || !file.exists(filtered_vcf)) {
   status_filter <- system(filter_command)
   stopifnot(status_filter == 0)
 
-  # O VCF do Stacks nao esta ordenado dentro de todos os scaffolds. vcfR le o
-  # arquivo sequencialmente e nao precisa de indice; por isso nao forcamos CSI.
+  # The Stacks VCF contains unsorted scaffolds; vcfR reads it sequentially.
 }
 
 number_snps <- as.integer(system2(
@@ -412,11 +384,11 @@ number_snps <- as.integer(system2(
   stdout = TRUE
 ) |> length())
 
-number_snps                         # esperado: 14.134
+number_snps                         # 14,134 SNPs
 stopifnot(number_snps == 14134)
 
 
-# 3. VCF PARA MATRIZ INDIVIDUO x SNP ####
+# 3.2 Convert VCF genotypes to an individual-by-SNP matrix ----
 
 genotype_cache_file <- file.path(out, "03_genotype_matrix_14134.rds")
 reuse_genotype_cache <- USE_SAVED_RDS && file.exists(genotype_cache_file)
@@ -442,8 +414,7 @@ if (!reuse_genotype_cache) {
     return.alleles = FALSE
   )
 
-# Conversao explicita de GT para numero de alelos alternativos. Nao usar
-# as.numeric=TRUE diretamente em GT: isso nao e uma contagem de dosagem.
+  # Code diploid genotypes as counts of the alternative allele (0, 1 or 2).
   geno <- matrix(
     NA_real_,
     nrow = nrow(genotype_strings),
@@ -483,7 +454,7 @@ stopifnot(ncol(geno) == 14134)
 stopifnot(identical(rownames(geno), rownames(Variables)))
 
 
-# 4. Conferencia DO PAINEL PRINCIPAL ####
+# 4. Summarise missingness, allele frequencies and RAD loci ----
 
 missing_locus <- colMeans(is.na(geno))
 called_alleles <- 2 * colSums(!is.na(geno))
@@ -505,7 +476,7 @@ qc_loci <- data.frame(
 
 write.csv(qc_loci, file.path(out, "02_panel_14134_QC.csv"), row.names = FALSE)
 
-length(unique(rad_locus))           # esperado: aproximadamente 5.776 RAD loci
+length(unique(rad_locus))           # approximately 5,776 RAD loci
 summary(missing_locus)
 summary(minor_allele_count)
 summary(rowMeans(is.na(geno)))
@@ -514,11 +485,10 @@ stopifnot(max(missing_locus) <= .300001)
 stopifnot(min(minor_allele_count) >= 3)
 
 
-# 5. PAINEL DE SENSIBILIDADE: UM SNP POR RAD LOCUS ####
+# 5. Select one SNP per RAD locus for linkage sensitivity ----
 
-# O universo principal continua com 14.134 SNPs. Este painel existe apenas para
-# testar se multiplos SNPs ligados dentro de tags de aproximadamente 48 bp estao
-# dominando PCA e sNMF.
+# Compare genome-wide PCA with a panel that retains one SNP per RAD tag.
+# Within each tag, favour lower missingness and then higher minor allele count.
 
 one_per_RAD <- qc_loci[order(
   qc_loci$rad_locus,
@@ -529,7 +499,7 @@ one_per_RAD <- qc_loci[order(
 one_per_RAD <- one_per_RAD[!duplicated(one_per_RAD$rad_locus),]
 geno_unlinked <- geno[, one_per_RAD$stacks_id, drop = FALSE]
 
-ncol(geno_unlinked)                 # esperado: aproximadamente 5.776
+ncol(geno_unlinked)                 # approximately 5,776 SNPs
 
 write.csv(
   one_per_RAD,
@@ -538,10 +508,9 @@ write.csv(
 )
 
 
-# 6. sNMF NO PAINEL DE 14.134 SNPs ####
+# 6. Estimate population structure and impute missing genotypes with sNMF ----
 
-# Segue a melhoria usada por Josue: o proprio modelo de ancestralidade imputa
-# os genotipos ausentes. Isso evita preencher todo missing com a media global.
+# Impute missing genotypes using the fitted sNMF ancestry model.
 
 snmf_file <- file.path(out, "03_Ameiva_14134.lfmm")
 snmf_matrix <- geno
@@ -597,10 +566,8 @@ if (RUN_SNMF) {
     sd = cross_entropy_summary$cross_entropy[, "sd"]
   )
 
-  # O minimo absoluto tende a continuar caindo lentamente com K e, neste caso,
-  # chegou ao limite testado. A inflexao biologicamente interpretavel e a
-  # concordancia com as analises anteriores sustentam K=4. Guardamos os dois
-  # valores para que a decisao nunca fique escondida.
+  # Mean cross-entropy reaches its minimum at the upper end of the tested K.
+  # K = 4 describes the broad structure; both choices are recorded for comparison.
   numerical_minimum_K <- cross_entropy_summary$K[
     cross_entropy_summary$K >= 2
   ][which.min(cross_entropy_summary$mean[cross_entropy_summary$K >= 2])]
@@ -620,8 +587,7 @@ if (RUN_SNMF) {
   best_run <- which.min(cross.entropy(snmf_project, K = bestK))
 
   Q <- LEA::Q(snmf_project, K = bestK, run = best_run)
-  # Refecha cada barra exatamente em 1. Pequenos erros de ponto flutuante nas
-  # proporcoes podem aparecer como fendas brancas no barplot empilhado.
+  # Normalise ancestry coefficients to sum to one for each individual.
   Q <- sweep(Q, 1, rowSums(Q), "/")
   rownames(Q) <- rownames(geno)
 
@@ -651,7 +617,7 @@ if (RUN_SNMF) {
   ggsave(file.path(figures, "01_sNMF_cross_entropy.png"), plot_entropy,
          width = 7, height = 5, dpi = 400, bg = "white")
 
-  # Imputacao modal orientada pela ancestralidade, como no script de Josue.
+  # Use modal genotypes conditional on the fitted ancestry model.
   impute(
     snmf_project,
     snmf_file,
@@ -669,10 +635,9 @@ if (RUN_SNMF) {
 }
 
 
-# 7. PCA CORRIGIDA E SENSIBILIDADE DE LIGACAO ####
+# 7. Compare genome-wide PCA and the one-SNP-per-RAD panel ----
 
-# Capblancq/Josue: vegan::rda sem preditores e com scale=TRUE.
-# A PCA principal usa exatamente os 14.134 SNPs imputados pelo sNMF.
+# PCA is an unconstrained RDA on the scaled, imputed allele-dosage matrix.
 
 pca_genome <- rda(geno_complete, scale = TRUE)
 
@@ -704,10 +669,8 @@ plot_pca <- ggplot(PCA_scores, aes(PC1, PC2, colour = ancestry_cluster)) +
 ggsave(file.path(figures, "02_PCA_sNMF_structure.png"), plot_pca,
        width = 8, height = 6, dpi = 400, bg = "white")
 
-# Componentes complementares da prancha de estrutura. A ordenacao da barra e
-# apenas visual (componente dominante e longitude) e nao transforma Q em grupos
-# discretos. O mapa mostra o componente dominante, enquanto a barra preserva a
-# ancestralidade continua de todos os individuos.
+# Map the predominant genetic cluster and retain the continuous ancestry
+# coefficients in the individual bar plot.
 structure_map_data <- data.frame(
   longitude = Variables$long,
   latitude = Variables$lat,
@@ -771,7 +734,7 @@ ggsave(
   dpi = 400, bg = "white"
 )
 
-# Mesma PCA com um SNP por RAD locus.
+# Repeat PCA using one SNP per RAD locus.
 geno_unlinked_complete <- geno_complete[, colnames(geno_unlinked), drop = FALSE]
 pca_unlinked <- rda(geno_unlinked_complete, scale = TRUE)
 
@@ -797,14 +760,11 @@ PCA_concordance <- data.frame(
 write.csv(PCA_concordance, file.path(out, "04_PCA_linkage_sensitivity.csv"), row.names = FALSE)
 
 
-# 8. EXPORTACAO PARA TREEMIX COM gl2treemix() ####
+# 8. Prepare geographic group allele counts for TreeMix ----
 
-# Este script prepara a entrada. A inferencia (m, repeticoes, OptM e
-# graficos) sera executada depois pelo script Bash da autora. Assim, uma etapa
-# externa longa nunca bloqueia as GEA deste arquivo.
-# TreeMix usa as populacoes biogeograficas do metadado original, nao as 17
-# abreviacoes de localidades em Variables$POP. Por decisao biologica, Parapr e
-# o antigo rotulo Cerado pertencem aqui a uma unica populacao Cerrado.
+# TreeMix uses geographic groups from the original metadata rather than sNMF
+# assignments. The Parapr and Cerado labels are combined into Cerrado.
+# The exported allele counts are the input for the separate TreeMix workflow.
 population_treemix <- Ameiva_metadata$pop[
   match(rownames(geno), Ameiva_metadata$id)
 ]
@@ -833,15 +793,13 @@ write.csv(
 
 if (PREPARE_TREEMIX) {
 
-  # gl2treemix espera um objeto genlight com individuos nas linhas e SNPs nas
-  # colunas. Mantemos NA: a funcao calcula as contagens com os alelos observados.
+  # Retain missing genotypes so allele counts use observed copies only.
   gl_treemix <- adegenet::as.genlight(geno)
   adegenet::pop(gl_treemix) <- population
   gl_treemix@ind.names <- rownames(geno)
   gl_treemix@loc.names <- colnames(geno)
 
-  # Objetos criados fora do fluxo DArT não trazem automaticamente as flags e
-  # métricas internas exigidas por gl.percent.freq(), chamado por gl2treemix().
+  # Initialise the dartR metrics required to calculate allele frequencies.
   gl_treemix <- dartR::gl.compliance.check(gl_treemix, verbose = 0)
   gl_treemix <- dartR::gl.recalc.metrics(gl_treemix, verbose = 0)
 
@@ -872,18 +830,11 @@ if (PREPARE_TREEMIX) {
 }
 
 
-# 9. STAIRWAY PLOT 2: SFS DOBRADO E BLUEPRINTS ####
+# 9. Construct folded site-frequency spectra for Stairway Plot 2 ----
 
-# Stairway Plot nao deve usar o painel GEA de 14.134 SNPs: o MAC >= 3 remove
-# justamente variantes raras que informam a historia recente. Usamos o genlight
-# logo apos os filtros de call rate do dartRverse, antes de MAC, e construimos
-# uma SFS dobrada para cada um dos quatro grandes grupos demograficos sNMF.
-# As populacoes biogeograficas ficam para o TreeMix; algumas possuem amostra e
-# cobertura insuficientes para Stairway Plot (projecao de apenas 6 cromossomos).
-#
-# As escalas absolutas dependem de taxa de mutacao, tempo de geracao e numero
-# de bases RAD efetivamente interrogadas. Estes valores ficam juntos e visiveis
-# aqui para analises de sensibilidade; nao devem ser escondidos no blueprint.
+# Use genotypes before the MAC filter to retain rare variants informative
+# about recent demographic history. Group individuals by dominant sNMF ancestry.
+# Absolute scales depend on mutation rate, generation time and assumed callable RAD length.
 STAIRWAY_MUTATION_RATE <- 1.0e-8
 STAIRWAY_GENERATION_YEARS <- 2
 STAIRWAY_RAD_TAG_LENGTH <- 45
@@ -904,8 +855,7 @@ if (PREPARE_STAIRWAYPLOT2) {
   stairway_geno <- stairway_geno[keep_stairway_individuals, , drop = FALSE]
   stairway_population <- factor(stairway_population[keep_stairway_individuals])
 
-  # IDs do Stacks tem formato locus:pos:fita. Cada locus representa uma tag de
-  # 45 bp; L inclui sitios variantes e monomorficos potencialmente observados.
+  # Estimate callable sequence length as the number of RAD tags times 45 bp.
   stairway_RAD_locus <- sub(":.*", "", colnames(stairway_geno))
   stairway_L <- length(unique(stairway_RAD_locus)) * STAIRWAY_RAD_TAG_LENGTH
 
@@ -918,9 +868,8 @@ if (PREPARE_STAIRWAYPLOT2) {
     ]
     observed_chromosomes <- 2 * colSums(!is.na(pop_geno))
 
-    # Projecao conservadora: numero par de cromossomos coberto em pelo menos
-    # 95% dos SNPs. A hipergeometrica preserva a contribuicao esperada de cada
-    # classe mesmo quando ha genotipos ausentes.
+    # Project onto the even chromosome count covered by approximately 95% of SNPs.
+    # Hypergeometric probabilities account for variable missingness across sites.
     nseq <- 2 * floor(as.numeric(quantile(
       observed_chromosomes, .05, na.rm = TRUE
     )) / 2)
@@ -1039,13 +988,11 @@ if (PREPARE_STAIRWAYPLOT2) {
 }
 
 
-# 10. PREDITORES AMBIENTAIS: ARTEFATOS, BORUTA E VIF ####
+# 10.1 Screen environmental predictors for redundancy ----
 
 variables_to_remove <- c(
-  # Variaveis trimestrais podem mudar de identidade entre celulas vizinhas,
-  # sobretudo sob regimes bimodais de precipitacao (Escobar et al. 2014).
-  # Booth (2022) mostra que elas nao sao inerentemente invalidas; aqui saem a
-  # priori por continuidade espacial, simplicidade e comparabilidade do modelo.
+  # Quarterly variables can change seasonal identity between neighbouring cells
+  # (Escobar et al. 2014; Booth 2022). Exclude them before predictor screening.
   "X.CHELSA_bio8_1981.2010_SA",
   "X.CHELSA_bio9_1981.2010_SA",
   "X.CHELSA_bio10_1981.2010_SA",
@@ -1079,7 +1026,7 @@ stopifnot(identical(sort(names(Environment_all)), sort(c(paste0("bio", 1:7), pas
 stopifnot(!any(quarter_variables %in% names(Environment_all)))
 stopifnot(!anyNA(Environment_all))
 
-# Boruta e mantido como triagem exploratoria, nao como prova de associacao.
+# Boruta screens climatic predictors of genome-wide PC1.
 boruta_data <- data.frame(
   genomic_PC1 = PCA_scores$PC1,
   Environment_all
@@ -1103,7 +1050,7 @@ variables_boruta <- getSelectedAttributes(
 variables_boruta
 saveRDS(boruta_result, file.path(out, "06_Boruta_environment.rds"))
 
-# VIF depois da exclusao biologica e da triagem Boruta, conforme acordado.
+# Reduce collinearity among predictors retained by Boruta (VIF threshold = 5).
 vif_second <- vifstep(Environment_all[, variables_boruta, drop = FALSE], th = 5)
 variables_after_vif <- vif_second@results$Variables
 variables_after_vif
@@ -1121,16 +1068,15 @@ geography <- data.frame(
 
 PCA_condition <- PCA_scores[, c("PC1", "PC2", "PC3")]
 
-# K coeficientes somam um; entram somente K-1 colunas.
+# Include K - 1 ancestry coefficients because the K proportions sum to one.
 Q_condition <- as.data.frame(Q[, seq_len(bestK - 1), drop = FALSE])
 names(Q_condition) <- paste0("Q", seq_len(ncol(Q_condition)))
 
 
-# 10. SELECAO FORWARD COMO NO SCRIPT DO JOSUE ####
+# 10.2 Select climatic predictors by forward RDA ----
 
-# Josue faz a selecao sobre o modelo ambiental nao condicionado. Os PCs
-# genomicos entram depois, na RDA de deteccao. Isso evita selecionar variaveis
-# dentro de um modelo diferente daquele descrito no tutorial dele.
+# Follow Josué's workflow: select predictors in an unconditioned RDA,
+# then include genomic covariates in the association models.
 RDA0 <- rda(geno_complete ~ 1, data = Environment_selection)
 RDAfull <- rda(geno_complete ~ ., data = Environment_selection)
 
@@ -1168,25 +1114,21 @@ write.csv(
 )
 
 
-# 11. RDA PRINCIPAL DO JOSUE E MODELOS DE PARTICAO ####
+# 11. Fit partial RDA models and compare conditioning schemes ----
 
 RDA_data <- cbind(Environment, geography, PCA_condition, Q_condition)
 snmf_terms <- paste(names(Q_condition), collapse = " + ")
 
-# Em todas as RDAs abaixo, Y e a matriz alelica 245 x 14.134. As variaveis
-# climaticas formam X; estrutura e geografia entram exclusivamente em
-# Condition(). Esta declaracao evita a inversao conceitual entre resposta e
-# preditores quando os modelos forem resumidos em tabelas ou no manuscrito.
-# RDA central do Script_josue.R.
+# The response contains individuals by SNPs; climate is the explanatory matrix.
+# Begin with the model conditioned on genomic PC1–PC3.
 formula_josue <- as.formula(paste(
   "geno_complete ~", paste(names(Environment), collapse = " + "),
   "+ Condition(PC1 + PC2 + PC3)"
 ))
 RDA_josue <- rda(formula_josue, data = RDA_data)
 
-# Conferencia de paisagem do Material_de_Apoio_Analises_Ecogenomicas.html.
-# Os dois modelos representam a estrutura de modos diferentes; seu consenso e
-# a RDA portatil usada na integracao com LFMM e Gradient Forest.
+# Compare unconditioned RDA with two partial RDA models that account for
+# geography and either genome-wide PCs or sNMF ancestry coefficients.
 RDA_simple <- rda(geno_complete ~ ., data = Environment)
 formula_geo <- as.formula(paste(
   "geno_complete ~", paste(names(Environment), collapse = " + "),
@@ -1199,10 +1141,7 @@ formula_snmf_geo <- as.formula(paste(
 ))
 RDA_snmf_geo <- rda(formula_snmf_geo, data = RDA_data)
 
-# Sensibilidade: a elevacao pode representar historia/isolamento, mas tambem
-# e um dos mecanismos que gera os gradientes climaticos. Condiciona-la pode
-# remover parte do sinal ambiental de interesse. Por isso ela nao integra o
-# modelo principal e e mantida apenas nesta comparacao explicita.
+# Elevation may capture isolation and climatic variation; include it in sensitivity models.
 formula_geo_elevation <- as.formula(paste(
   "geno_complete ~", paste(names(Environment), collapse = " + "),
   "+ Condition(PC1 + PC2 + PC3 + lon + lat + elevation)"
@@ -1223,9 +1162,7 @@ RDA_models <- list(
   simple_sensitivity = RDA_simple
 )
 
-# Interpretacao da orientacao dos modelos. Uma RDA
-# so prossegue se a resposta mantiver os 245 individuos nas linhas e os 14.134
-# SNPs nas colunas.
+# Confirm the response retains the 245 individuals and 14,134 SNPs.
 stopifnot(all(vapply(
   RDA_models,
   function(model) identical(dim(model$Ybar), dim(geno_complete)),
@@ -1267,9 +1204,7 @@ for (model_name in names(RDA_models)) {
   print(RsquareAdj(model))
   print(vif.cca(model))
 
-  # O teste global sustenta a inferencia e permanece com 999 permutacoes.
-  # Testes por eixo/margem sao diagnosticos e usam 199: com 14.134 respostas,
-  # 999 em cada particao excedeu a memoria disponivel sem mudar o universo.
+  # Use 999 permutations for the global test and 199 for optional axis and margin diagnostics.
   global_test_file <- file.path(
     out,
     paste0("07_RDA_", model_name, "_K", bestK, "_", ENVIRONMENT_VERSION, "_global_test.rds")
@@ -1285,8 +1220,7 @@ for (model_name in names(RDA_models)) {
   gc()
 
   if (RUN_PARTITIONED_RDA_TESTS) {
-    # Opcional: estes testes excederam 15 GB de RAM nesta maquina. Rodar um
-    # modelo por vez numa maquina com mais memoria, sem alterar os candidatos.
+    # Axis and marginal tests have substantial memory requirements for this SNP panel.
     test_axis <- anova(model, by = "axis", permutations = 199)
     print(test_axis)
     saveRDS(test_axis, file.path(out, paste0("07_RDA_", model_name, "_axis_test.rds")))
@@ -1301,8 +1235,7 @@ for (model_name in names(RDA_models)) {
   }
 }
 
-# Painel da RDA parcial principal de paisagem. Os pontos sao individuos
-# posicionados a partir da resposta alelica; as setas sao os preditores X.
+# Plot individual scores and climatic predictor vectors in partial RDA space.
 RDA_geo_sites <- as.data.frame(scores(
   RDA_geo, display = "sites", choices = 1:2, scaling = 2
 ))
@@ -1362,7 +1295,7 @@ ggsave(
 )
 
 
-# 12. RDADAPT NA RDA PRINCIPAL ####
+# 12. Detect partial RDA candidates using robust locus-loading distances ----
 
 rdadapt <- function(rda_object, K) {
   loadings <- rda_object$CCA$v[, seq_len(K), drop = FALSE]
@@ -1370,8 +1303,7 @@ rdadapt <- function(rda_object, K) {
   if (is.null(locus_ids)) locus_ids <- colnames(geno_complete)
   stopifnot(length(locus_ids) == nrow(loadings))
 
-  # apply(scale) remove os nomes das linhas em algumas versoes de R; os IDs
-  # sao guardados antes para manter a correspondencia exata com o VCF.
+  # Store SNP identifiers before scaling loadings to retain the link to the VCF.
   loadings <- scale(loadings)
   max_abs_loading_z <- apply(abs(loadings), 1, max)
   robust_distance <- covRob(
@@ -1396,8 +1328,7 @@ rda_scans <- lapply(RDA_models, function(x) rdadapt(x, min(K_axes, x$CCA$rank)))
 
 for (model_name in names(rda_scans)) {
   scan <- rda_scans[[model_name]]
-  # Josue: p < 0.01 / numero total de SNPs testados.
-  # O q-value continua salvo apenas como diagnostico, nunca como criterio.
+  # Use Bonferroni-adjusted significance for candidate selection; retain q-values for comparison.
   bonferroni_threshold <- .01 / nrow(scan)
   scan$bonferroni_threshold <- bonferroni_threshold
   scan$candidate_Bonferroni01 <- scan$p_value < bonferroni_threshold
@@ -1433,9 +1364,7 @@ write.csv(data.frame(stacks_id = candidates_RDA), file.path(out, "08_RDA_candida
 write.csv(data.frame(stacks_id = candidates_RDA_material), file.path(out, "08_RDA_candidates_landscape_consensus.csv"), row.names = FALSE)
 write.csv(data.frame(stacks_id = candidates_RDA_material_strict), file.path(out, "08_RDA_candidates_landscape_strict_3SD.csv"), row.names = FALSE)
 
-# Reproducao adicional do procedimento do RDA-2026: dentro de cada locus RAD,
-# mantemos somente o SNP com menor p-value. Isso e uma tabela de sensibilidade;
-# a tabela principal continua contendo todos os SNPs que passaram Bonferroni.
+# Assess linkage sensitivity by retaining the lowest-P SNP per RAD locus.
 rad_id_from_stacks <- function(x) sub(":.*$", "", x)
 best_per_rad <- function(scan, candidate_column = "candidate_Bonferroni01") {
   selected <- scan[scan[[candidate_column]], , drop = FALSE]
@@ -1456,20 +1385,17 @@ write.csv(
 )
 
 
-# 13. LFMM2 POR PREDITOR CLIMATICO ####
+# 13. Test each climatic predictor with LFMM2 ----
 
 if (RUN_LFMM) {
 
-  # LFMM2 testa a matriz alelica (resposta) contra cada preditor ambiental
-  # selecionado para a RDA. Os genotipos sao os imputados pelo sNMF; portanto,
-  # nao ha NA e a ordem de individuos e SNPs permanece a da matriz principal.
+  # Test each selected climatic predictor against the same sNMF-imputed allele matrix.
   stopifnot(!anyNA(geno_complete))
   stopifnot(identical(rownames(geno_complete), rownames(Environment)))
   stopifnot(identical(colnames(geno_complete), colnames(geno)))
 
-  # K=4 foi definido independentemente pela curva de entropia cruzada do sNMF.
-  # K=2--8 e salvo apenas como analise de sensibilidade da calibracao GIF;
-  # nao escolhemos K a partir dos p-values de associacao.
+  # Set the latent-factor count to the selected sNMF K. Optional fits at K = 2–8
+  # compare genomic inflation factors without selecting K by association P-values.
   K_LFMM2 <- bestK
   K_sensitivity <- 2:8
   K_sensitivity <- K_sensitivity[K_sensitivity < nrow(geno_complete)]
@@ -1483,7 +1409,7 @@ if (RUN_LFMM) {
     predictor_name <- colnames(Environment)[j]
     X_predictor <- as.matrix(Environment[, j, drop = FALSE])
 
-    # Analise principal: K pre-especificado pelo sNMF global.
+    # Fit the prespecified latent-factor model and calibrate the tests.
     set.seed(2027 + j)
     fit_LFMM2 <- LEA::lfmm2(
       input = geno_complete,
@@ -1509,7 +1435,7 @@ if (RUN_LFMM) {
       q_value = p.adjust(p_LFMM2, method = "BH")
     )
 
-    # Sensibilidade: cada K ajusta o mesmo modelo LFMM2 para registrar GIF.
+    # Compare genomic inflation factors across the requested K values.
     K_to_report <- if (RUN_LFMM2_K_SENSITIVITY) K_sensitivity else K_LFMM2
     gif_values <- numeric(length(K_to_report))
     for (k_index in seq_along(K_to_report)) {
@@ -1550,9 +1476,8 @@ if (RUN_LFMM) {
   write.csv(lfmm2_gif_sensitivity, file.path(out, "09_LFMM2_GIF_K_sensitivity.csv"), row.names = FALSE)
 
   candidates_LFMM <- unique(lfmm2_candidates$stacks_id)
-  # Definicao unica usada daqui em diante: um locus adaptativo linear precisa
-  # ser sustentado simultaneamente pelo consenso RDA de paisagem e pelo LFMM.
-  # Resultados exclusivos de um metodo ficam apenas como diagnosticos.
+  # The shared linear candidate set is the intersection of the landscape
+  # partial RDA consensus and LFMM2 candidates.
   linear_adaptive_loci <- intersect(
     candidates_RDA_material,
     candidates_LFMM
@@ -1586,10 +1511,10 @@ if (RUN_LFMM) {
 }
 
 
-# 14. ANOTACAO FUNCIONAL DO NOVO UNIVERSO ####
+# 14. Annotate SNPs and compare functional classes ----
 
-# A anotacao antiga tinha apenas os 19.948 loci ref7. Repetimos a classificacao
-# diretamente nas coordenadas dos 14.134 SNPs para preservar o denominador.
+# Classify SNPs across the complete 14,134-marker panel to define the background
+# for functional enrichment. Use annotations transferred to the Ameiva assembly.
 annotation_14134_file <- file.path(out, "10_annotation_14134.csv")
 
 if (!USE_SAVED_RDS || !file.exists(annotation_14134_file)) {
@@ -1790,11 +1715,10 @@ ggsave(
 )
 
 
-# 15. GRADIENT FOREST: TURNOVER ADAPTATIVO NAO LINEAR ####
+# 15. Explore Gradient Forest turnover for shared linear candidates ----
 
-# Como no Material_de_Apoio_Analises_Ecogenomicas, GF recebe a intersecao entre
-# o consenso das duas pRDAs de paisagem e o LFMM por PCs ambientais. Todos os
-# 14.134 SNPs permanecem nos modelos GEA anteriores.
+# This candidate-panel GF uses the four-variable linear association workflow.
+# The separate full-panel GF script models all 14,134 SNPs.
 
 GF_loci <- candidates_consensus
 GF_loci <- intersect(GF_loci, colnames(geno_complete))
@@ -1863,15 +1787,11 @@ if (RUN_GRADIENT_FOREST) {
 }
 
 
-# 16. RDAFOREST: COVARIANCIA GENOMICA TOTAL NAO LINEAR ####
+# 16. Model genome-wide nonlinear associations with RDAforest ----
 
-# Implementacao baseada diretamente em z0on/RDA-forest, versao 2.6.10:
-# https://github.com/z0on/RDA-forest
-# A sequencia segue a vinheta dos lobos: distancia 1-correlacao, diagnostico de
-# IBD, ordenacao condicionada, makeGF exploratorio, selecao mtrySelJack e
-# ordinationJackknife. Aqui acrescentamos PC1-PC3 aos dois eixos great-circle;
-# elevacao fica fora do modelo principal porque estrutura parte dos proprios
-# gradientes climaticos e e avaliada separadamente como sensibilidade na RDA.
+# Follow the wolf vignette in RDAforest 2.6.10 (https://github.com/z0on/RDA-forest).
+# Use 1 minus genotype correlation as genomic dissimilarity, with geographic
+# axes and genomic PC1–PC3 as covariates.
 
 genomic_distance <- 1 - cor(t(geno_complete), use = "pairwise.complete.obs")
 genomic_distance <- (genomic_distance + t(genomic_distance)) / 2
@@ -2104,7 +2024,7 @@ if (RUN_RDAFOREST) {
   ggsave(file.path(figures, "04_RDAforest_importance.png"), plot_RDAforest,
          width = 8, height = 6, dpi = 400, bg = "white")
 
-  # Diagnostico 1 da vinheta: isolamento por distancia antes da correcao.
+  # Compare geographic and genomic distances before and after conditioning.
   pair_index <- lower.tri(genomic_distance)
   ibd_table <- rbind(
     data.frame(
@@ -2139,7 +2059,7 @@ if (RUN_RDAFOREST) {
   ggsave(file.path(figures, "14_RDAforest_IBD_diagnostic.png"), plot_IBD,
          width = 8, height = 6, dpi = 400, bg = "white")
 
-  # Diagnostico 2: inercia dos PCoA/MDS e poder preditivo fora da amostra.
+  # Compare residual ordination inertia with out-of-bag prediction of genomic axes.
   axis_variance <- RDAforest_ordination$CA$eig /
     sum(RDAforest_ordination$CA$eig)
   axis_variance_table <- data.frame(
@@ -2343,7 +2263,7 @@ if (RUN_RDAFOREST) {
 }
 
 
-# 17. MOSAICO ADAPTATIVO NOS GENOTIPOS CANDIDATOS ####
+# 17. Describe multilocus genotype clusters among shared candidates ----
 
 mosaic_loci <- candidates_consensus
 mosaic_genotypes <- geno_complete[, mosaic_loci, drop = FALSE]
@@ -2459,9 +2379,7 @@ ggsave(file.path(figures, "05_adaptive_mosaic_genotype_PCA.png"), plot_mosaic_PC
 ggsave(file.path(figures, "06_adaptive_mosaic_map.png"), plot_mosaic_map,
        width = 8, height = 7, dpi = 400, bg = "white")
 
-# K=3 e mostrado como sensibilidade porque a PC2 sugere uma subdivisao, mas o
-# criterio global continua favorecendo K=2. Assim a estrutura visual nao e
-# escondida nem promovida a um terceiro genotipo sem suporte comparativo.
+# Compare K = 3 with the K = 2 solution favoured by mean silhouette width.
 mosaic_table_K3 <- mosaic_table
 mosaic_table_K3$genotype_cluster <- factor(kmeans_models[[which(k_values == 3)]]$cluster)
 plot_mosaic_PCA_K3 <- ggplot(
@@ -2481,7 +2399,7 @@ ggsave(
 )
 
 
-# 18. PROJECAO ESPACIAL PRESENTE: GF E RDA ####
+# 18. Project candidate-panel GF and RDA onto climatic rasters ----
 
 spatial_out <- file.path(out, "spatial_offset")
 spatial_temp <- file.path(spatial_out, "terra_tmp")
@@ -2525,12 +2443,9 @@ if (RUN_SPATIAL_PROJECTION) {
   climate_mid <- read_climate_period("2041-2070")
   climate_late <- read_climate_period("2071-2100")
 
-  # Conferencia do envelope ambiental. Os mapas continentais nao devem inventar
-  # precisao fora do clima observado nos 245 individuos. Consideramos uma
-  # margem de 10% do intervalo no presente e 20% no futuro, como na logica de
-  # extrapolacao do RDAforest original. Pixels alem dessa margem sao excluidos
-  # dos offsets GF/RDA; pixels apenas proximos ao limite continuam visiveis,
-  # mas sao marcados como "near-range" no mapa de conferencia.
+  # Classify cells by their distance from the sampled climatic ranges.
+  # Allow a buffer of 10% of the observed span for present climate and 20% for future climate.
+  # Cells beyond either period's allowance are excluded from offset comparisons.
   climate_training_ranges <- vapply(
     Environment,
     range,
@@ -2626,8 +2541,7 @@ if (RUN_SPATIAL_PROJECTION) {
     overwrite = TRUE
   )
 
-  # Confere que o clima presente projetado e o mesmo clima extraido no CSV.
-  # Correlacoes proximas de um descartam troca de CRS, coordenadas ou unidades.
+  # Compare raster values extracted at sampling coordinates with the original climate table.
   climate_alignment_audit <- do.call(rbind, lapply(
     names(Environment),
     function(variable) {
@@ -2669,8 +2583,8 @@ if (RUN_SPATIAL_PROJECTION) {
     row.names = FALSE
   )
 
-  # Gradient Forest: cada raster passa pela curva cumulativa aprendida para o
-  # mesmo preditor. A PCA usa o espaco transformado dos individuos atuais.
+  # Transform each predictor through its GF cumulative-importance curve.
+  # Fit the display PCA to transformed values at sampled individuals.
   GF_transformed_training <- as.data.frame(predict(
     gradient_forest, newdata = gradient_forest$X, extrap = FALSE
   ))
@@ -2715,8 +2629,7 @@ if (RUN_SPATIAL_PROJECTION) {
   GF_mid_PCA <- project_GF_PCA(GF_mid_transformed)
   GF_late_PCA <- project_GF_PCA(GF_late_transformed)
 
-  # ECDFs do presente colocam cada eixo no intervalo 0-1 sem permitir que
-  # poucos extremos comprimam o contraste do restante da paisagem.
+  # Use present-day empirical percentiles as a shared colour scale across periods.
   set.seed(2027)
   GF_ECDF_reference <- lapply(1:3, function(axis) {
     reference <- spatSample(
@@ -2751,9 +2664,8 @@ if (RUN_SPATIAL_PROJECTION) {
   writeRaster(GF_late_RGB, file.path(spatial_out, "18_GF_late_century_RGB.tif"), overwrite = TRUE)
   saveRDS(GF_turnover_pca, file.path(spatial_out, "18_GF_turnover_PCA.rds"))
 
-  # RDA espacial: como no material, refazemos uma RDA climatica somente com o
-  # consenso rigoroso de paisagem. Condition() controla a deteccao; o modelo
-  # ambiental refitado fornece coeficientes projetaveis em rasters.
+  # Fit a climate-only RDA to the strict landscape candidate subset.
+  # The partial RDA was used for detection; this refit provides spatial projection coefficients.
   stopifnot(length(candidates_RDA_material_strict) >= 2)
   RDA_projection_model <- rda(
     geno_complete[, candidates_RDA_material_strict, drop = FALSE] ~ .,
@@ -2783,7 +2695,7 @@ if (RUN_SPATIAL_PROJECTION) {
   saveRDS(RDA_projection_model, file.path(spatial_out, "18_RDA_projection_model.rds"))
 
 
-# 19. GENOMIC OFFSET RDA E GRADIENT FOREST ####
+# 19. Calculate candidate-panel GF and RDA genomic offset ----
 
   GF_offset_mid <-
     sqrt(sum((GF_mid_transformed - GF_present_transformed)^2)) *
@@ -2844,12 +2756,10 @@ if (RUN_SPATIAL_PROJECTION) {
   write.csv(offset_summary, file.path(spatial_out, "19_offset_summary.csv"), row.names = FALSE)
 
 
-# 20. K-MEANS DAS PAISAGENS E FIGURAS ESPACIAIS ####
+# 20. Classify projected landscapes and visualise genomic offset ----
 
-  # A anomalia futura dos arquivos CHELSA preserva a impressao espacial do
-  # modelo climatico de origem. Desenhar o offset a 2,5 arc-min criaria falsa
-  # precisao visual. A analise continua na grade de 2,5 arc-min, mas os mapas de
-  # offset sao resumidos para aproximadamente 0,5 grau apenas para exibicao.
+  # Aggregate offset maps to approximately 0.5 degrees for display; numerical
+  # analyses retain the 2.5-arc-minute grid.
   offset_display_factor <- max(
     1,
     round(.5 / terra::res(GF_offset_mid)[1])
@@ -3251,7 +3161,7 @@ if (RUN_SPATIAL_PROJECTION) {
     dpi = 400, bg = "white"
   )
 
-  # Conferencia visual 1: dominio combinado presente-futuro usado nos offsets.
+  # Display the combined present and future climatic domain.
   domain_plot_data <- rbind(
     transform(
       as.data.frame(domain_mid_display, xy = TRUE, na.rm = TRUE),
@@ -3298,8 +3208,7 @@ if (RUN_SPATIAL_PROJECTION) {
     dpi = 400, bg = "white"
   )
 
-  # Conferencia visual 2: as formas retilineas e os blocos podem ser comparados
-  # diretamente com futuro - presente de cada preditor, antes de qualquer GEA.
+  # Inspect future-minus-present climatic changes separately from genomic predictions.
   climate_delta_mid_display <- aggregate(
     climate_mid - climate_present,
     fact = offset_display_factor, fun = mean, na.rm = TRUE
@@ -3380,11 +3289,10 @@ if (RUN_SPATIAL_PROJECTION) {
 }
 
 
-# 21. RDAFOREST ESPACIAL E OFFSET PELO CODIGO ORIGINAL ####
+# 21. Project RDAforest and compare genomic offsets ----
 
-# Esta e a projecao propria do RDAforest. Ela nao substitui os offsets RDA e GF
-# acima: usa as predicoes diretas dos eixos genomicos do ordinationJackknife e
-# gen_offset_oj(), escaladas pela disparidade adaptativa presente (quantil 90%).
+# Calculate offset from direct ordination-jackknife predictions using gen_offset_oj(),
+# scaled by the 90th percentile of present-day genomic disparity.
 
 RDAforest_spatial_out <- file.path(
   spatial_out,
@@ -3405,13 +3313,8 @@ if (RUN_RDAFOREST && RUN_RDAFOREST_SPATIAL && RUN_SPATIAL_PROJECTION) {
   names(climate_mid_RDAforest) <- paste0("mid_", selected_RDAforest)
   names(climate_late_RDAforest) <- paste0("late_", selected_RDAforest)
 
-  # Uma grade regular bidimensional de aproximadamente 10 mil pontos candidatos
-  # evita o padrao de transectos produzido por spatSample(method = "regular")
-  # em rasters muito alongados. Depois retemos apenas pontos terrestres com
-  # clima completo nos tres periodos. Os tres periodos entram juntos em uma
-  # unica chamada de
-  # ordinationJackknife: cada floresta e ajustada uma vez e prediz os tres
-  # climas, eliminando variacao artificial entre execucoes temporais.
+  # Construct a regular two-dimensional grid and retain cells with complete climate
+  # across all three periods. Predict all periods within the same jackknife fit.
   RDAforest_grid_extent <- terra::ext(climate_present_RDAforest)
   RDAforest_grid_aspect <-
     (terra::xmax(RDAforest_grid_extent) - terra::xmin(RDAforest_grid_extent)) /
@@ -3792,10 +3695,8 @@ if (RUN_RDAFOREST && RUN_RDAFOREST_SPATIAL && RUN_SPATIAL_PROJECTION) {
     row.names = FALSE
   )
 
-  # Concordancia entre a lente linear (RDA) e as duas lentes nao lineares
-  # (Gradient Forest e RDAforest). Trabalhamos com postos 0-1 porque as tres
-  # distancias possuem unidades diferentes. O indice nonlinear_rank e a media
-  # de GF e RDAforest; agreement vale 1 quando a RDA linear tem o mesmo posto.
+  # Compare within-period percentile ranks because the three offsets use different units.
+  # Contrast the RDA rank with the mean rank of GF and RDAforest.
   rank01 <- function(x) {
     if (length(x) <= 1) return(rep(NA_real_, length(x)))
     (rank(x, ties.method = "average") - 1) / (length(x) - 1)
@@ -3895,8 +3796,7 @@ if (RUN_RDAFOREST && RUN_RDAFOREST_SPATIAL && RUN_SPATIAL_PROJECTION) {
   present_xy <- RDAforest_spatial_xy[present_good, , drop = FALSE]
   present_environment <- RDAforest_present_X[present_good, , drop = FALSE]
 
-  # A funcao original continua produzindo os objetos analiticos; seus graficos
-  # base sao enviados a um dispositivo nulo e redesenhados abaixo em ggplot.
+  # Obtain the predicted genomic-space ordination for the display panels.
   grDevices::pdf(NULL)
   RDAforest_adaptation_unclustered <- RDAforest::plot_adaptation(
     RDAforest_present_spatial$predictions.direct,
@@ -3960,9 +3860,7 @@ if (RUN_RDAFOREST && RUN_RDAFOREST_SPATIAL && RUN_SPATIAL_PROJECTION) {
     width = 3300, height = 1100, res = 200
   )
 
-  # Falsa-cor comum aos tres periodos a partir de uma PCA das predicoes diretas
-  # presentes. Limites presentes fixos tornam as cores comparaveis no tempo;
-  # roxo, laranja e creme substituem o RGB generico sem perder os tres eixos.
+  # Fit the display PCA to present-day direct predictions and project both future periods.
   RDAforest_prediction_pca <- prcomp(
     RDAforest_present_spatial$predictions.direct,
     center = TRUE, scale. = TRUE
@@ -3978,10 +3876,7 @@ if (RUN_RDAFOREST && RUN_RDAFOREST_SPATIAL && RUN_SPATIAL_PROJECTION) {
   )
   RDAforest_mid_scores <- project_RDAforest_prediction(RDAforest_mid_spatial)
   RDAforest_late_scores <- project_RDAforest_prediction(RDAforest_late_spatial)
-  # Cada eixo e transformado pela ECDF estimada na paisagem presente. Isso
-  # preserva a ordem, torna os tres canais comparaveis e impede que poucos
-  # valores extremos dominem toda a faixa de cor. As mesmas ECDFs presentes
-  # sao aplicadas aos dois periodos futuros.
+  # Use present-day empirical percentiles for the three axes in every period.
   RDAforest_axis_ECDF <- lapply(
     seq_len(ncol(RDAforest_present_scores)),
     function(j) stats::ecdf(RDAforest_present_scores[, j])
@@ -4076,9 +3971,7 @@ if (RUN_RDAFOREST && RUN_RDAFOREST_SPATIAL && RUN_SPATIAL_PROJECTION) {
     bg = "white", device = cairo_pdf
   )
 
-  # A grade RDAforest e regular em duas dimensoes, mas pequenas diferencas de
-  # ponto flutuante podem fazer geom_raster interromper a renderizacao. Pontos
-  # quadrados preservam exatamente a grade e sao robustos a esse detalhe.
+  # Use square points to represent the grid despite floating-point coordinate differences.
   gc()
   plot_RDAforest_offset <- ggplot(
     RDAforest_offsets,
@@ -4131,10 +4024,7 @@ if (RUN_RDAFOREST && RUN_RDAFOREST_SPATIAL && RUN_SPATIAL_PROJECTION) {
          plot_RDAforest_comparison, width = 10, height = 5.5,
          dpi = 400, bg = "white")
 
-  # Mapas comparaveis para o fim do seculo. RDA, GF e RDAforest nao medem
-  # distancia na mesma unidade; por isso cada superficie e convertida em posto
-  # percentual. Assim, uma cor igual significa a mesma posicao relativa no
-  # continente, e nao uma falsa igualdade entre escalas numericas distintas.
+  # Map relative offsets on the shared valid domain, not raw distances across methods.
   concordance_late <- subset(
     RDAforest_concordance, period == "2071-2100"
   )
@@ -4241,12 +4131,9 @@ if (RUN_RDAFOREST && RUN_RDAFOREST_SPATIAL && RUN_SPATIAL_PROJECTION) {
 }
 
 
-# 22. QUATRO PRANCHAS PRINCIPAIS DO ARTIGO ####
+# 22. Assemble the four composite figures from the core workflow ----
 
-# O artigo principal usa somente quatro figuras compostas. Todos os paineis
-# individuais acima permanecem disponiveis para o Material Suplementar e para
-# conferencia. As pranchas sao salvas em PNG para leitura e TIFF/LZW a 400 dpi
-# para a submissao.
+# Export these composite panels and retain the individual diagnostic figures.
 if (
   RUN_GRADIENT_FOREST && RUN_RDAFOREST && RUN_SPATIAL_PROJECTION &&
   RUN_RDAFOREST_SPATIAL
@@ -4277,9 +4164,6 @@ if (
   ) +
     patchwork::plot_annotation(tag_levels = "a")
 
-  # A quarta prancha compara diretamente as tres lentes. O dominio de
-  # projecao continua salvo como diagnostico suplementar, mas nao ocupa uma das
-  # quatro figuras principais do artigo.
   main_figure_4 <- plot_offset_concordance
 
   main_figures <- list(
@@ -4327,7 +4211,7 @@ if (
 }
 
 
-# 23. etapa FINAL E origem dos resultados ####
+# 23. Export analysis summaries, figure index and session information ----
 
 summary_final <- data.frame(
   metric = c(

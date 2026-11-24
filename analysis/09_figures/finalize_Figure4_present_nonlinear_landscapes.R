@@ -1,9 +1,5 @@
-###############################################################################
-# FIGURE 4 — PRESENT-DAY NONLINEAR LANDSCAPES
-# Display-only revision: existing rasters and raw visualization-PC orientations.
-###############################################################################
 
-#### 1. INPUTS AND LINEAGE ####
+# 1. Read present-day landscape rasters and PCA summaries ----
 
 library(terra)
 library(ggplot2)
@@ -29,7 +25,7 @@ rdf_pca <- readRDS(file.path(out, "RDAforest_present_visualization_PCA.rds"))
 gf_variance <- 100 * gf_pca$sdev^2 / sum(gf_pca$sdev^2)
 rdf_variance <- 100 * rdf_pca$sdev^2 / sum(rdf_pca$sdev^2)
 
-#### 2. DESCRIPTIVE CLIMATIC DIRECTION OF THE VISUALIZATION AXES ####
+# 2. Relate landscape PC1 scores to climatic predictors ----
 
 predictors_gf <- c("bio1", "bio2", "bio3", "bio4", "bio5", "bio6", "bio7", "bio12", "bio13", "bio15")
 predictors_rdf <- c("bio13", "bio3", "bio2")
@@ -43,8 +39,7 @@ climate_present <- lapply(predictors_gf, function(p) {
 })
 names(climate_present) <- predictors_gf
 
-# Descriptive rank correlations use original climate at exactly the finite
-# cells/scores shown by each existing PC1 surface. They are not model tests.
+# Calculate descriptive Spearman correlations using each model's native grid.
 gf_values <- values(gf, mat = FALSE)
 gf_direction <- do.call(rbind, lapply(predictors_gf, function(p) {
   climate_values <- values(climate_present[[p]], mat = FALSE)
@@ -79,10 +74,8 @@ climatic_end <- function(x, end) {
   paste(unname(bio_name[z$Predictor[seq_len(min(3, nrow(z)))]]), collapse = ", ")
 }
 
-#### 3. DISPLAY-ONLY CARTOGRAPHY AND CLIMATE-ASSOCIATION INSETS ####
+# 3. Map landscape scores and climatic correlations ----
 
-# No displayed value is interpolated or smoothed. GF keeps its native 1/24-degree
-# pixels; RDAforest retains its validated native 4,532-cell prediction grid.
 map_panel <- function(x, title, legend, display_data = NULL) {
   q <- quantile(values(x, mat = FALSE), c(.02, .98), na.rm = TRUE)
   lim <- max(abs(q)) * c(-1, 1)
@@ -108,9 +101,8 @@ map_panel <- function(x, title, legend, display_data = NULL) {
       plot.margin = margin(3, 3, 1, 3, "mm"))
 }
 
-# RDAforest has 4,532 native prediction cells. Bilinear resampling is used only
-# to render the native cells more smoothly; the analytical raster remains the
-# surface used above for all correlations and reported statistics.
+# RDAforest has 4,532 native prediction cells. Resample for display only;
+# numerical summaries use the original cells.
 fine_rdf <- rast(ext(rdf), resolution = .10, crs = crs(rdf))
 fine_land <- resample(template, fine_rdf, method = "near")
 rdf_display_raster <- mask(resample(rdf, fine_rdf, method = "bilinear"), fine_land)
@@ -145,7 +137,7 @@ ggsave(file.path(out, "Figure_4_present_nonlinear_landscapes_final.pdf"), figure
 ggsave(file.path(out, "Figure_4_present_nonlinear_landscapes_final.png"), figure,
   width = 12, height = 6.4, dpi = 600, bg = "white")
 
-#### 4. CAPTION, RESULTS TEXT AND RESOLUTION CHECK ####
+# 4. Export figure captions and numerical summaries ----
 
 caption <- paste0(
   "Figure 4. Present-day nonlinear climate-associated genomic landscapes in ",

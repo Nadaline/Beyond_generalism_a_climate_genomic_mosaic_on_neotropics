@@ -1,8 +1,4 @@
-###############################################################################
-# FIGURE 5 — FUTURE GENOMIC OFFSET, 2071–2100
-# Post-processing of saved partial-RDA, controlled whole-panel GF and final
-# RDAforest outputs. No model, climate or candidate procedure is rerun.
-###############################################################################
+# 1. Read saved RDA, full-panel GF and RDAforest offset predictions ----
 
 library(terra)
 library(ggplot2)
@@ -26,7 +22,7 @@ rank01 <- function(x) (rank(x, ties.method = "average") - 1) / (length(x) - 1)
 relative_cols <- c("#FFF7EF", "#F8C58F", "#D99A8B", "#8F668D", "#5B2A86", "#32134F")
 agreement_cols <- c("High–high" = "#32134F", "Intermediate" = "#B6A2C8", "Low–low" = "#FFF1DF", "Linear higher" = "#73539B", "Nonlinear higher" = "#F28E2B")
 
-#### 1. CURRENT SAVED RASTERS ON THE VALIDATED RDAFOREST GRID ####
+# 2. Match the three methods on the RDAforest grid and rank offsets ----
 
 make_period <- function(period, rda, gf) {
   z <- rdf[rdf$period == period, ]
@@ -56,8 +52,8 @@ make_period <- function(period, rda, gf) {
 
 late <- make_period("2071-2100", rda_late, gf_late)
 mid <- make_period("2041-2070", rda_mid, gf_mid)
-# Display-only GF fill: valid ranks are retained exactly; only cells outside the
-# GF climate domain receive a smooth interpolated display value.
+# Interpolate only the late-century display values outside the supported GF domain.
+# The fitted offset, domain mask and cross-method comparisons remain separate.
 gf_ok <- late[late$GF_valid, ]
 gf_fill <- mgcv::gam(GF_rank ~ s(x, y, bs = "tp", k = 120), data = gf_ok, method = "REML")
 late$GF_display_rank <- late$GF_rank
@@ -66,7 +62,7 @@ late$GF_display_rank <- pmin(pmax(late$GF_display_rank, 0), 1)
 mid$GF_display_rank <- mid$GF_rank
 write.csv(rbind(late, mid), file.path(out, "Figure_5_relative_offset_source.csv"), row.names = FALSE)
 
-#### 2. MASK, AGREEMENT AND CORRELATION AUDITS ####
+# 3. Summarise domain coverage, agreement and offset correlations ----
 
 mask_audit <- do.call(rbind, lapply(list("2071-2100" = late, "2041-2070" = mid), function(z) data.frame(
   period = unique(z$period), RDA_finite = sum(z$RDA_valid), GF_finite = sum(z$GF_valid), RDAforest_finite = sum(z$RDAforest_valid),
@@ -97,7 +93,7 @@ write.csv(rbind(tail_audit(late, "RDA", "Partial RDA"), tail_audit(late, "GF", "
 
 writeLines(c("RASTER ARTIFACT AUDIT", "", "The final Figure 5 uses saved offsets only. The suspicious narrow Cerrado feature is not an additional graphical layer and was not smoothed or removed.", "RDA and GF source rasters share extent, origin, CRS and 1/24-degree resolution. RDAforest is represented only at its existing coarser native prediction cells.", "No hydrography layer was present in the current project outputs for an overlay diagnostic. Any narrow feature is retained pending a separate raw-predictor lineage audit."), file.path(out, "Figure_5_raster_artifact_audit.txt"))
 
-#### 3. FIGURES ####
+# 4. Plot mid- and late-century relative genomic offset ----
 
 tile_w <- 1.02 * median(diff(sort(unique(late$x)))); tile_h <- 1.02 * median(diff(sort(unique(late$y))))
 map_offset <- function(z, variable, title) ggplot(z[is.finite(z[[variable]]), ], aes(x, y, fill = .data[[variable]])) +

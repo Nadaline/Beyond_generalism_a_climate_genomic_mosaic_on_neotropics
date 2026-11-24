@@ -37,8 +37,7 @@ The only computational option that differed from Liftoff's defaults was
 | Proportion of target-GFF genes passing both default thresholds | 52.37% |
 
 Because `-exclude_partial` was not supplied, the target GFF retains mappings
-below either default threshold and marks them with `partial_mapping=True` and
-or `low_identity=True`. Thus, 18,157/19,975 is the **annotation-transfer
+below either default threshold and marks them with `partial_mapping=True` and/or `low_identity=True`. Thus, 18,157/19,975 is the **annotation-transfer
 yield**, whereas 9,509/19,975 is the subset satisfying both default mapping
 criteria. The target GFF contains 7,950 `partial_mapping=True` gene features
 and 8,648 `low_identity=True` gene features; these categories can overlap.
@@ -83,8 +82,8 @@ exon and CDS features using `findOverlaps(..., ignore.strand = TRUE)`.
   transfer counts)
 - `work/unmapped_features.txt`
 - `work/GCA_023333525.2_genomic.gff3`
-- `scripts/prepare_liftoff_ameiva.sh`
-- `RDA-2027-bonferroni.R`, annotation block around lines 1622--1685
+- `analysis/07_annotation/prepare_liftoff_ameiva.sh`
+- `analysis/01_core/RDA-2027-bonferroni.R`, annotation section
 
 Liftoff default thresholds and option semantics are documented in the
 [official Liftoff README](https://github.com/agshumate/Liftoff/blob/master/README.md).

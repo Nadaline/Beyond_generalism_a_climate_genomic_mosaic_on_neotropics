@@ -1,8 +1,5 @@
-###############################################################################
-#### CLIMATIC DIRECTION AND GEOGRAPHY OF ALL EIGHT CANDIDATE GROUPS ####
-###############################################################################
 
-#### 1. VERIFIED INPUTS ####
+# 1. Read signed LFMM2 effects, genotypes, environment and spatial folds ----
 
 library(ggplot2)
 
@@ -14,6 +11,7 @@ stopifnot(nzchar(base), nzchar(results), nzchar(project),
           nzchar(environment_file), dir.exists(base), dir.exists(results),
           file.exists(environment_file))
 
+# Confirm the reconstructed LFMM2 effects reproduce the saved test statistics.
 check <- read.csv(file.path(base, "lfmm2_recovery/01_refit_vs_original_test_check.csv"))
 stopifnot(nrow(check) == 4L, all(check$n_SNPs == 14134L),
           all(check$max_abs_z_difference < 1e-8),
@@ -35,6 +33,7 @@ rownames(geno) <- rownames(G$geno)
 colnames(geno) <- colnames(G$geno)
 PCA <- read.csv(file.path(results, "04_PCA_14134_scores.csv"))
 Variables <- read.csv(environment_file, check.names = FALSE)
+# Match all individual-level tables to the genotype matrix by identifier.
 PCA <- PCA[match(rownames(geno), PCA$InternalID), ]
 Variables <- Variables[match(rownames(geno), Variables$InternalID), ]
 folds <- folds[match(rownames(geno), folds$InternalID), ]
@@ -59,7 +58,7 @@ stopifnot(identical(dim(geno), c(245L, 14134L)),
                                         "BIO3 -", "BIO13 +", "BIO13 -",
                                         "BIO14 +", "BIO14 -")))
 
-#### 2. GROUP SIZE AND SIGNED LFMM2 EFFECTS ####
+# 2. Summarise SNP and RAD-locus counts and signed LFMM2 effects ----
 
 count <- as.data.frame(table(groups$group), stringsAsFactors = FALSE)
 names(count) <- c("group", "n_SNPs")
@@ -79,7 +78,7 @@ heat$predictor <- factor(toupper(heat$predictor),
 write.csv(heat, file.path(base, "31_v4_group_mean_signed_effects.csv"),
           row.names = FALSE)
 
-#### 3. OBSERVED ALT FREQUENCY AT EVERY LOCALITY ####
+# 3. Estimate group mean ALT dosage by individual and locality ----
 
 climate_names <- c(BIO2 = "Diurnal temp. range (°C)",
                    BIO3 = "Isothermality (ratio)",
@@ -87,6 +86,7 @@ climate_names <- c(BIO2 = "Diurnal temp. range (°C)",
                    BIO14 = "Driest-month precip. (mm)")
 frequency <- data.frame()
 individual <- data.frame()
+# Dividing mean diploid dosage by two expresses each group on an allele-frequency scale.
 for (g in count$group) {
   loci <- groups$stacks_id[groups$group == g]
   y <- rowMeans(geno[, loci, drop = FALSE]) / 2
@@ -115,7 +115,7 @@ stopifnot(nrow(frequency) == 8L * 185L)
 write.csv(frequency, file.path(base, "32_v4_all_group_locality_ALT_frequency.csv"),
           row.names = FALSE)
 
-#### 4. DESCRIPTIVE CLIMATE DECILES ####
+# 4. Summarise locality frequencies across climatic deciles ----
 
 bins <- data.frame()
 for (g in count$group) {
@@ -140,10 +140,10 @@ for (g in count$group) {
 write.csv(bins, file.path(base, "33_v4_observed_frequency_by_climate_decile.csv"),
           row.names = FALSE)
 
-#### 5. CONDITIONAL ASSOCIATIONS AND SPATIAL HOLDOUTS ####
+# 5. Compare conditional associations, linkage sensitivity and spatial holdouts ----
 
-# Fractional-response quasi-binomial GLMs keep predicted frequencies in [0,1].
-# I give each individual weight one; SNPs are not treated as independent trials.
+# Fractional-response quasi-binomial GLMs model group frequencies on the 0–1 scale.
+# Each individual has equal weight; SNPs are not independent binomial trials.
 conditional <- data.frame()
 held_out <- data.frame()
 rad_check <- data.frame()
@@ -189,6 +189,9 @@ for (g in count$group) {
         unname(coef(fit_one)["climate"]),
       same_conditional_direction =
         sign(coef(fit)["climate"]) == sign(coef(fit_one)["climate"])))
+  # Withhold each checkerboard fold and standardise climate using training individuals.
+  # Candidate groups were defined before this diagnostic, so this tests prediction
+  # of group frequencies rather than independent candidate discovery.
   for (held in 1:4) {
     train <- folds$fold != held
     data <- covariates
@@ -230,7 +233,7 @@ names(stability)[1] <- "group"
 write.csv(stability, file.path(base, "37_v4_LFMM2_group_fold_stability.csv"),
           row.names = FALSE)
 
-#### 6. DISPLAY-ONLY MAP SCORES AND GROUP CHOICE ####
+# 6. Standardise locality scores and select groups for maps ----
 
 map_data <- do.call(rbind, lapply(count$group, function(g)
   data.frame(site_scores[, c("longitude", "latitude", "n_individuals")],
@@ -244,6 +247,7 @@ write.csv(data.frame(scale = "within-group locality z-score", centre = 0,
                      n_locality_group_points = nrow(map_data)),
           file.path(base, "38_v4_map_display_scale.csv"), row.names = FALSE)
 
+# Select the two largest groups with at least 25 SNPs and positive predictive gain in all four folds.
 positive_cv <- aggregate(delta_RMSE ~ group, held_out,
                          function(z) all(z > 0))
 names(positive_cv)[2] <- "all_four_folds_improve"
@@ -256,7 +260,7 @@ write.csv(data.frame(group = main_groups,
   criterion = "two largest groups with >=25 SNPs and positive climate-added held-out RMSE improvement in all four folds"),
   file.path(base, "39_v4_main_map_group_selection.csv"), row.names = FALSE)
 
-#### 7. FIGURE PANELS ####
+# 7. Plot signed associations, frequencies and geographic scores ----
 
 gmt <- readLines(file.path(base, "south_america_borders.gmt"), warn = FALSE)
 coordinate <- grepl("^[0-9-]+[.]?[0-9]*[[:space:]]+[-0-9]", gmt)
@@ -329,7 +333,7 @@ p_d <- ggplot(gf, aes(ecdf, mean_cumimp, colour = predictor)) +
        x = "Observed climatic gradient (ECDF)",
        y = "Mean cumulative split importance", colour = "Predictor") + paper
 
-#### 8. MAIN AND SUPPLEMENTARY EXPORTS ####
+# 8. Export main and supplementary figures ----
 
 panels <- list(A = p_a, B = p_b, C = p_c, D = p_d)
 for (i in seq_along(panels)) {

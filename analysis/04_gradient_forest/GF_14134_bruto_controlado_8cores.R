@@ -1,75 +1,58 @@
-###############################################################################
-# GRADIENT FOREST COM TODOS OS 14.134 SNPs
-# Ameiva ameiva: modelo bruto e modelo controlado por estrutura + geografia
-#
-# COMO RODAR NO TERMINAL (a partir da pasta do projeto):
-# nohup Rscript GF_14134_bruto_controlado_8cores.R > GF_14134_live.log 2>&1 &
-# tail -f GF_14134_live.log
-#
-# O script usa ate 8 nucleos, salva cada bloco no HD externo e pode continuar
-# de onde parou. Ele NAO altera os resultados antigos do RDA-2027.R.
-###############################################################################
+# Full-panel Gradient Forest for Ameiva ameiva: raw allele dosages and residuals.
+# Run from the project directory; each fitted batch is saved separately.
 
 
-# 1. PACOTES ####
+# 1. Load packages ----
 
-# Inclui primeiro a biblioteca local do projeto, onde gradientForest esta.
 .libPaths(c(normalizePath("R-library"), .libPaths()))
 
-# gradientForest ajusta uma Random Forest separada para cada SNP.
+# Gradient Forest fits a separate forest for each SNP response.
 library(gradientForest)
 
-# parallel permite que diferentes blocos de SNPs sejam rodados simultaneamente.
 library(parallel)
 
-# LEA le a matriz .lfmm imputada que ja foi produzida no RDA-2027.
+# LEA reads the imputed allele matrix prepared by the core analysis.
 library(LEA)
 
 
-# 2. DECISOES QUE VOCE PODE ALTERAR ####
+# 2. Set model and computational parameters ----
 
-# Numero maximo de processos simultaneos. Em seu computador, usar 8.
+# Maximum number of simultaneous worker processes.
 N_CORES <- 6L
 
-# Numero de arvores por SNP. 500 e apropriado para a primeira execucao completa.
-# Depois, os SNPs mais estaveis podem ser reajustados com 1.000 ou 2.000.
+# Number of trees per SNP response.
 N_TREES <- 500L
 
-# Numero de variaveis ambientais candidatas em cada divisao da arvore.
-# Com dez preditores, mtry = 2 oferece um meio-termo adequado.
+# Number of predictors considered at each split (mtry = 3 of ten predictors).
 MTRY <- 3L
 
-# Usamos mais blocos do que nucleos. Assim, cada arquivo e menor e, se a
-# execucao cair, perde-se no maximo um bloco curto, nao 1/8 de toda a analise.
+# Partition SNPs into computational batches; these are not genomic linkage blocks.
 N_BLOCKS <- 32L
 
-# Semente geral para que a divisao dos SNPs e os forests sejam reproduziveis.
 MASTER_SEED <- 2027L
 
-# TRUE roda o GF com genotipos 0/1/2 sem controle de estrutura.
+# Fit raw allele dosages.
 RUN_RAW <- TRUE
 
-# TRUE roda o GF sobre residuos controlados por PC1-PC3, longitude e latitude.
+# Fit residuals after accounting for structure and geography.
 RUN_CONTROLLED <- TRUE
 
-# TRUE combina oficialmente os blocos com combinedGradientForest().
 COMBINE_BLOCKS <- TRUE
 
-# Se TRUE, arquivos de blocos ja completos sao reutilizados.
+# Reuse previously saved batch models where available.
 RESUME_FINISHED_BLOCKS <- TRUE
 
 
-# 3. CAMINHOS ####
+# 3. Define input and output paths ----
 
 project <- "/home/nadaline/Documents/Phd/RADseq/The-Edge-of-Adaptation"
 
-# Os dados grandes e todos os novos resultados ficam no HD externo.
 base_results <- paste0(
   "/media/nadaline/NADALINE II/The-Edge-of-Adaptation/",
   "genome_annotation/results/RDA-2027-14134"
 )
 
-# Pasta exclusiva desta analise, para nao sobrescrever o GF de 118 candidatos.
+# Store full-panel models separately from the candidate-panel GF.
 GF_out <- file.path(base_results, "gradient_forest_all_14134")
 GF_raw_out <- file.path(GF_out, "raw")
 GF_controlled_out <- file.path(GF_out, "controlled_PC1_PC3_lon_lat")
@@ -77,7 +60,7 @@ GF_controlled_out <- file.path(GF_out, "controlled_PC1_PC3_lon_lat")
 dir.create(GF_raw_out, recursive = TRUE, showWarnings = FALSE)
 dir.create(GF_controlled_out, recursive = TRUE, showWarnings = FALSE)
 
-# Arquivos de entrada ja gerados e auditados pelo RDA-2027.
+# The core workflow supplies the genotype matrix, imputed dosages and genome-wide PCs.
 genotype_cache <- file.path(base_results, "03_genotype_matrix_14134.rds")
 imputed_file <- file.path(base_results, "03_Ameiva_14134.lfmm_imputed.lfmm")
 pca_file <- file.path(base_results, "04_PCA_14134_scores.csv")
@@ -86,68 +69,58 @@ environment_decision_file <- file.path(
 )
 environment_file <- "/home/nadaline/Documents/Phd/RADseq/Ameiva_Variables_rda.csv"
 
-# Interrompe cedo, com mensagem clara, caso o HD nao esteja montado.
 required_files <- c(
   genotype_cache, imputed_file, pca_file,
   environment_decision_file, environment_file
 )
 stopifnot(all(file.exists(required_files)))
 
-# Nao permite solicitar mais nucleos do que o computador oferece.
 available_cores <- parallel::detectCores(logical = FALSE)
 N_CORES <- min(N_CORES, available_cores, N_BLOCKS)
 
 
-# 4. MATRIZ GENOTIPICA IMPUTADA: 245 INDIVIDUOS x 14.134 SNPs ####
+# 4. Read and check the imputed 245 × 14,134 genotype matrix ----
 
-# O cache contem nomes dos individuos, IDs dos SNPs e coordenadas genomicas.
 genotype_object <- readRDS(genotype_cache)
 
-# A matriz .lfmm contem os mesmos genotipos depois da imputacao por sNMF K=4.
 geno_complete <- as.matrix(LEA::read.lfmm(imputed_file))
 
-# Recoloca nomes de linhas e colunas, pois o formato LFMM nao os armazena.
+# Restore sample and SNP identifiers, which are absent from the LFMM matrix format.
 rownames(geno_complete) <- rownames(genotype_object$geno)
 colnames(geno_complete) <- colnames(genotype_object$geno)
 
-# Auditorias essenciais: o GF nao deve iniciar com painel ou ordem incorretos.
 stopifnot(nrow(geno_complete) == 245L)
 stopifnot(ncol(geno_complete) == 14134L)
 stopifnot(!anyNA(geno_complete))
 stopifnot(all(geno_complete %in% c(0, 1, 2)))
 
 
-# 5. AMBIENTE E ALINHAMENTO DOS INDIVIDUOS ####
+# 5. Match individuals and transform climatic predictors ----
 
-# check.names=FALSE preserva os nomes originais CHELSA.
 Variables <- read.csv(environment_file, check.names = FALSE)
 
-# Usa InternalID como chave e reorganiza o CSV na ordem exata dos genotipos.
+# Match environmental records using InternalID.
 rownames(Variables) <- Variables$InternalID
 Variables <- Variables[rownames(geno_complete), , drop = FALSE]
 stopifnot(identical(rownames(Variables), rownames(geno_complete)))
 
-# Recupera do próprio RDA-2027 quais preditores foram selecionados.
+# Alternative predictor selection from the core RDA is not used here:
 #environment_decision <- read.csv(environment_decision_file)
 #selected_environment <- strsplit(
 #  environment_decision$selected[1], ";", fixed = TRUE
 #)[[1]]
 #selected_environment <- trimws(selected_environment)
-# Uma recomendação para America do sul e não usarmos as variaveis trimestrais que tem problemas de continuidade espacial.
-# Lista de bioclimas recomendada (sem trimestres e sem Bio14)
+# Use ten non-quarterly bioclimatic variables; exclude BIO14 from this GF panel.
 selected_environment <- c("bio1", "bio2", "bio3", "bio4", "bio5", "bio6", "bio7", "bio12", "bio13", "bio15")
 
-# Converte nomes curtos como bio2 para as colunas CHELSA do CSV.
 environment_columns <- paste0( "X.CHELSA_", selected_environment, "_1981.2010_SA")
 stopifnot(all(environment_columns %in% names(Variables)))
 
-# Copia somente as variaveis escolhidas e restaura os nomes biologicos curtos.
 Environment_raw <- Variables[, environment_columns, drop = FALSE]
 names(Environment_raw) <- selected_environment
 stopifnot(!anyNA(Environment_raw))
 
-# ECDF coloca cada preditor entre 0 e 1, preserva a ordem dos valores e evita
-# que poucos extremos controlem as divisoes das arvores.
+# Use empirical cumulative probabilities to put all predictors on a 0–1 scale.
 Environment <- as.data.frame(lapply(
   Environment_raw,
   function(x) stats::ecdf(x)(x)
@@ -155,14 +128,13 @@ Environment <- as.data.frame(lapply(
 rownames(Environment) <- rownames(geno_complete)
 
 
-# 6. COVARIAVEIS DE ESTRUTURA E GEOGRAFIA ####
+# 6. Account for population structure and geography ----
 
-# Carrega os PCs calculados exatamente sobre o painel de 14.134 SNPs.
 PCA_scores <- read.csv(pca_file, check.names = FALSE)
 rownames(PCA_scores) <- PCA_scores$InternalID
 PCA_scores <- PCA_scores[rownames(geno_complete), , drop = FALSE]
 
-# Longitude e latitude sao padronizadas para terem escalas comparaveis.
+# Standardise coordinates before constructing the covariate matrix.
 covariates <- data.frame(
   PC1 = PCA_scores$PC1,
   PC2 = PCA_scores$PC2,
@@ -173,30 +145,27 @@ covariates <- data.frame(
 rownames(covariates) <- rownames(geno_complete)
 stopifnot(!anyNA(covariates))
 
-# A matriz inclui intercepto. QR e calculada uma unica vez para todos os SNPs.
+# Reuse the QR decomposition for all SNP responses.
 covariate_matrix <- model.matrix(
   ~ PC1 + PC2 + PC3 + longitude + latitude,
   data = covariates
 )
 covariate_qr <- qr(covariate_matrix)
 
-# Remove de cada SNP a parte linear explicada por estrutura e geografia.
-# qr.resid aceita toda a matriz de SNPs de uma vez, sendo muito mais rapido do
-# que chamar lm() 14.134 vezes.
+# Remove the linear effects of PC1–PC3, longitude and latitude from allele dosages.
 geno_controlled <- qr.resid(covariate_qr, geno_complete)
 rownames(geno_controlled) <- rownames(geno_complete)
 colnames(geno_controlled) <- colnames(geno_complete)
 
-# Os residuos sao centrados; padronizamos apenas a variancia para que SNPs de
-# frequencias diferentes nao tenham peso determinado apenas por sua escala.
+# Scale centred residuals to unit variance for comparability across SNPs.
 residual_sd <- apply(geno_controlled, 2, sd)
 stopifnot(all(is.finite(residual_sd)), all(residual_sd > 0))
 geno_controlled <- sweep(geno_controlled, 2, residual_sd, "/")
 
 
-# 7. MAPA ENTRE NOMES INTERNOS DO GF E IDs REAIS DOS SNPs ####
+# 7. Link Gradient Forest response names to original SNP identifiers ----
 
-# Nomes simples evitam erros do pacote com IDs contendo dois-pontos e sinais.
+# Use simple response names and retain the original genomic coordinates in the key.
 GF_names <- sprintf("SNP%05d", seq_len(ncol(geno_complete)))
 GF_map <- data.frame(
   GF_name = GF_names,
@@ -208,14 +177,13 @@ GF_map <- data.frame(
 )
 write.csv(GF_map, file.path(GF_out, "00_GF_SNP_map.csv"), row.names = FALSE)
 
-# As duas matrizes recebem os mesmos nomes e, portanto, podem ser comparadas.
 colnames(geno_complete) <- GF_names
 colnames(geno_controlled) <- GF_names
 
 
-# 8. DIVISAO REPRODUZIVEL EM BLOCOS ####
+# 8. Distribute SNPs across computational batches ----
 
-# round-robin deixa todos os blocos praticamente do mesmo tamanho.
+# Round-robin allocation gives batches of nearly equal size.
 block_id <- rep(seq_len(N_BLOCKS), length.out = length(GF_names))
 GF_blocks <- split(GF_names, block_id)
 
@@ -230,17 +198,16 @@ write.csv(
 )
 
 
-# 9. FUNCAO QUE AJUSTA UM BLOCO ####
+# 9. Fit and save a Gradient Forest batch ----
 
 fit_GF_block <- function(block_number, response_matrix, model_name, model_out) {
 
-  # Nome deterministico permite retomar a execucao automaticamente.
   block_file <- file.path(
     model_out, sprintf("GF_%s_block_%02d_of_%02d.rds",
                       model_name, block_number, N_BLOCKS)
   )
 
-  # Se o bloco ja existe e pode ser lido, nao gastamos horas recalculando-o.
+# Read a saved model if it is available and has the expected class.
   if (RESUME_FINISHED_BLOCKS && file.exists(block_file)) {
     previous <- try(readRDS(block_file), silent = TRUE)
     if (!inherits(previous, "try-error") &&
@@ -252,14 +219,14 @@ fit_GF_block <- function(block_number, response_matrix, model_name, model_out) {
 
   block_SNPs <- GF_blocks[[block_number]]
 
-  # Cada bloco contem todos os individuos, os quatro preditores e parte dos SNPs.
+# Every batch contains all individuals, ten predictors and a subset of SNPs.
   block_data <- data.frame(
     Environment,
     response_matrix[, block_SNPs, drop = FALSE],
     check.names = FALSE
   )
 
-  # Cada bloco recebe semente propria, mas reproduzivel.
+# Derive a reproducible seed for each batch and response type.
   set.seed(MASTER_SEED + block_number +
              ifelse(model_name == "controlled", 10000L, 0L))
 
@@ -275,7 +242,7 @@ fit_GF_block <- function(block_number, response_matrix, model_name, model_out) {
     ntree = N_TREES,
     mtry = MTRY,
     maxLevel = 0,
-    # Com maxLevel=0, corr.threshold nao filtra respostas nem preditores.
+# With maxLevel = 0, conditional importance is not used.
     corr.threshold = .50,
     compact = TRUE,
     nbin = 101,
@@ -283,8 +250,7 @@ fit_GF_block <- function(block_number, response_matrix, model_name, model_out) {
     check.names = FALSE
   )
 
-  # Primeiro grava em arquivo temporario e depois renomeia. Isso impede que uma
-  # interrupcao deixe um .rds incompleto parecendo um bloco valido.
+# Write to a temporary file before renaming so interrupted writes are not reused.
   temporary_file <- paste0(block_file, ".partial")
   saveRDS(block_model, temporary_file, compress = FALSE)
   file.rename(temporary_file, block_file)
@@ -294,7 +260,7 @@ fit_GF_block <- function(block_number, response_matrix, model_name, model_out) {
 }
 
 
-# 10. FUNCAO QUE RODA OS 32 BLOCOS USANDO ATE 8 NUCLEOS ####
+# 10. Fit batches in parallel and collect model summaries ----
 
 run_GF_model <- function(response_matrix, model_name, model_out) {
 
@@ -305,7 +271,7 @@ run_GF_model <- function(response_matrix, model_name, model_out) {
   message("Inicio: ", Sys.time())
   message("============================================================\n")
 
-  # mclapply usa processos fork no Linux. No maximo oito blocos rodam juntos.
+# mclapply distributes batches among forked processes on Linux.
   block_files <- parallel::mclapply(
     seq_len(N_BLOCKS),
     fit_GF_block,
@@ -318,15 +284,14 @@ run_GF_model <- function(response_matrix, model_name, model_out) {
   )
   block_files <- unlist(block_files, use.names = FALSE)
 
-  # Confirma que todos os blocos existem antes de resumir ou combinar.
   stopifnot(length(block_files) == N_BLOCKS)
   stopifnot(all(file.exists(block_files)))
 
   block_models <- lapply(block_files, readRDS)
   stopifnot(all(vapply(block_models, inherits, logical(1), "gradientForest")))
 
-  # Extrai R2 fora-da-bolsa de cada SNP. O pacote mantem em result somente os
-  # SNPs com R2 positivo; os demais recebem zero na tabela completa.
+# Record positive out-of-bag R² values from the fitted forests; assign zero
+  # to SNPs absent from the package's positive-performance results.
   positive_R2 <- unlist(lapply(block_models, function(x) x$result))
   positive_names <- sub("^[^.]+\\.", "", names(positive_R2))
   if (length(positive_names) == length(positive_R2)) names(positive_R2) <- positive_names
@@ -345,7 +310,7 @@ run_GF_model <- function(response_matrix, model_name, model_out) {
     row.names = FALSE
   )
 
-  # Importancia ambiental media ponderada igualmente entre os blocos.
+# Retain predictor importance separately for each batch.
   block_importance <- do.call(rbind, lapply(
     seq_along(block_models),
     function(i) data.frame(
@@ -361,7 +326,7 @@ run_GF_model <- function(response_matrix, model_name, model_out) {
     row.names = FALSE
   )
 
-  # A funcao oficial combina curvas cumulativas e permite predict() posterior.
+# Combine cumulative importance functions using the package's implementation.
   combined_model <- NULL
   if (COMBINE_BLOCKS) {
     names(block_models) <- sprintf("block%02d", seq_along(block_models))
@@ -377,7 +342,6 @@ run_GF_model <- function(response_matrix, model_name, model_out) {
     )
   }
 
-  # Libera os modelos individuais da memoria; os arquivos permanecem no HD.
   rm(block_models)
   gc()
 
@@ -386,7 +350,7 @@ run_GF_model <- function(response_matrix, model_name, model_out) {
 }
 
 
-# 11. EXECUCAO BRUTA E CONTROLADA ####
+# 11. Fit raw and structure-controlled models ----
 
 set.seed(MASTER_SEED)
 
@@ -409,7 +373,7 @@ if (RUN_CONTROLLED) {
 }
 
 
-# 12. COMPARACAO ENTRE GF BRUTO, GF CONTROLADO, RDA E LFMM ####
+# 12. Compare Gradient Forest performance with partial RDA and LFMM2 candidates ----
 
 
 if (RUN_RAW && RUN_CONTROLLED) {
@@ -424,7 +388,6 @@ if (RUN_RAW && RUN_CONTROLLED) {
     all = TRUE
   )
   
-  # A tabela deve conter o painel inteiro, não apenas candidatos prévios.
   stopifnot(nrow(comparison) == nrow(GF_map))
   stopifnot(!anyDuplicated(comparison$GF_name))
   
@@ -438,8 +401,7 @@ comparison$RDA <- comparison$stacks_id %in% RDA_candidates
   
   RDA_candidates <- read.csv(RDA_file, check.names = FALSE)$stacks_id
   comparison$RDA <- comparison$stacks_id %in% RDA_candidates
-  # Apenas o resultado LFMM2 atual entra na integracao. O arquivo LFMM antigo
-  # (ridge sobre PCs ambientais) e mantido somente como registro historico.
+# Use the per-predictor LFMM2 FDR candidate table for the comparison.
   LFMM_file <- file.path(
     base_results, "09_LFMM2_candidates_FDR05.csv"
   )
@@ -455,8 +417,7 @@ comparison$RDA <- comparison$stacks_id %in% RDA_candidates
   comparison$RDA <- comparison$stacks_id %in% RDA_candidates
   comparison$LFMM <- comparison$stacks_id %in% LFMM_candidates
   
-  # “R2 positivo” não é um filtro útil aqui. Definimos alto suporte GF
-  # de forma transparente: 5% superiores do GF controlado.
+# Define high GF performance relative to the 95th percentile of controlled OOB R².
   GF_R2_threshold <- quantile(
     comparison$R2_OOB_controlled,
     probs = 0.95,
@@ -467,7 +428,7 @@ comparison$RDA <- comparison$stacks_id %in% RDA_candidates
   comparison$GF_high <- comparison$R2_OOB_controlled >= GF_R2_threshold
   comparison$linear_support <- comparison$RDA | comparison$LFMM
   
-  # As classes descrevem padrões de detecção; não são um ranking de qualidade.
+# Classify SNPs by the combination of methods supporting them.
   comparison$detection_class <- ifelse(
     comparison$GF_high & !comparison$linear_support,
     "GF prioritário",
@@ -509,7 +470,7 @@ comparison$RDA <- comparison$stacks_id %in% RDA_candidates
 }
 
 
-# 13. REGISTRO FINAL ####
+# 13. Export model settings and panel sizes ----
 
 run_summary <- data.frame(
   item = c(
@@ -528,8 +489,7 @@ write.csv(run_summary, file.path(GF_out, "00_GF_run_summary.csv"), row.names = F
 
 message("\nGradient Forest bruto e controlado finalizados com sucesso.")
 message("Resultados: ", GF_out)
-###############################################################################
-##### Avaliation
+# 14. Inspect fitted importance, turnover and out-of-bag performance ----
 base_results <- "/media/nadaline/NADALINE II/The-Edge-of-Adaptation/genome_annotation/results/RDA-2027-14134"
 GF_out <- file.path(base_results, "gradient_forest_all_14134")
 
@@ -599,7 +559,7 @@ dev.off()
 
 
 
-##### Final aproach
+# 15. Plot raw versus controlled performance by detection class ----
 
 library(ggplot2)
 
@@ -665,10 +625,9 @@ ggsave(
 )
 
 
-##### trÊs conjuntos de snps candidatos, lineares, nao lineares e sem o gf
-#### CLASSIFICACAO DOS TRES CONJUNTOS PRIORITARIOS ####
+# 16. Identify shared, GF-only and linear-only candidate sets ----
 
-# Limiar explícito para “alto suporte” no GF controlado.
+# Use the same controlled OOB R² percentile as in the detection-class comparison.
 GF_R2_threshold <- quantile(
   comparison$R2_OOB_controlled,
   probs = 0.95,
@@ -678,21 +637,20 @@ GF_R2_threshold <- quantile(
 
 comparison$GF_high <- comparison$R2_OOB_controlled >= GF_R2_threshold
 
-# Mantém todas as combinações na tabela, inclusive as intermediárias.
+# Keep SNPs outside these three categories in the complete comparison table.
 comparison$candidate_set <- "Intermediário / outro"
 
-# 1. Consenso estrito: menor risco de falso positivo.
+# Shared support: above the GF threshold and detected by both linear methods.
 comparison$candidate_set[
   comparison$GF_high & comparison$RDA & comparison$LFMM
 ] <- "Consenso triplo"
 
-# 2. GF prioritário: hipótese de relação não linear ou condicional.
+# GF-only: above the GF threshold and absent from both linear candidate sets.
 comparison$candidate_set[
   comparison$GF_high & !comparison$RDA & !comparison$LFMM
 ] <- "GF prioritário"
 
-# 3. Linear prioritário: efeito recuperado por RDA e/ou LFMM,
-# mas sem alto suporte relativo no GF.
+# Linear-only: detected by partial RDA or LFMM2 and below the GF threshold.
 comparison$candidate_set[
   !comparison$GF_high & (comparison$RDA | comparison$LFMM)
 ] <- "Linear prioritário"
@@ -707,7 +665,6 @@ comparison$candidate_set <- factor(
   )
 )
 
-# Conferencia dos tamanhos dos conjuntos.
 candidate_set_summary <- as.data.frame(
   table(comparison$candidate_set),
   stringsAsFactors = FALSE
@@ -726,7 +683,6 @@ write.csv(
   row.names = FALSE
 )
 
-# Arquivo prático apenas com os três conjuntos que serão interpretados.
 priority_sets <- subset(
   comparison,
   candidate_set != "Intermediário / outro"
@@ -738,7 +694,7 @@ write.csv(
   row.names = FALSE
 )
 
-#ploting
+# 17. Visualise the three candidate sets ----
 COL_PURPLE <- "#6B3F92"
 COL_ORANGE <- "#F39940"
 COL_TEAL   <- "#297C6F"
@@ -803,12 +759,11 @@ ggsave(
   dpi = 600
 )
 
-#Acima basicamente vemos em laranja um conjunto de preditores lineares corroborado pelas 3 analises, como GF analise nao linearidade resulta em os loci nao compartilhados em verde, que pelo r² sao os candidatos mais promissores. Vamos ver isso em um vennplot:
-#### VENN: GF CONTROLADO, RDA E LFMM ####
+# 18. Compare overlap among the three methods ----
 
 library(ggVennDiagram)
 
-# O GF entra como o conjunto de loci do percentil 95 de R² controlado.
+# Define the GF set using the upper 5% of controlled OOB R².
 GF_R2_threshold <- quantile(
   comparison$R2_OOB_controlled,
   probs = 0.95,

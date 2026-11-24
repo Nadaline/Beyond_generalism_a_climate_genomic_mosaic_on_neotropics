@@ -1,9 +1,8 @@
 # Gradient Forest methods and input-lineage record
 
-Two distinct Gradient Forest (GF) workflows exist in this project. They must
-not be described as the same analysis.
+The project contains two GF workflows with different response sets and climate predictors.
 
-## A. Candidate-locus GF used for the published spatial GF-offset maps
+## A. Earlier candidate-locus GF and spatial offset
 
 ### Exact saved object and response set
 
@@ -25,10 +24,7 @@ The 118 SNPs were defined in `RDA-2027.R` as the intersection of:
    partial RDAs; and
 2. candidates from the earlier LFMM analysis based on environmental PCs.
 
-This is a historical RDA ∩ LFMM consensus. It is **not** the later set of 164
-SNPs from RDA ∩ LFMM2. Consequently, the existing GF offset maps should be
-described as based on the 118-locus historical linear-consensus set unless GF
-is deliberately refitted using the LFMM2 consensus.
+This earlier RDA ∩ LFMM consensus differs from the later 164-SNP RDA ∩ LFMM2 set and from the full-panel GF used for the Chapter 1 projections.
 
 ### Environmental predictors and preprocessing
 
@@ -50,7 +46,7 @@ GF object contains z-standardised, not ECDF-transformed, predictors**.
 
 Responses were the sNMF-imputed 0/1/2 genotype dosages. No additional GF-stage
 residualisation for genomic PCs, ancestry coefficients, longitude or latitude
-was applied. Population structure and geography entered the preceding pRDA
+was applied. Population structure and geography entered the preceding partial RDA
 candidate-selection stage, rather than this candidate-GF response matrix.
 
 ### GF parameters actually passed
@@ -74,9 +70,8 @@ gradientForest(
 `nbin`, `transform`, and minimap-style options were not supplied in this call;
 they therefore followed the installed `gradientForest` package defaults at the
 time of the historical run. The original run did not save `sessionInfo()` or a
-package-version manifest. The current repaired project environment has
-`gradientForest` 0.1-37, but this should **not** be claimed as the historical
-run version without a contemporaneous environment record.
+package-version manifest. A later project environment has
+`gradientForest` 0.1-37, but the original run version remains unconfirmed.
 
 ### Spatial projection and domain handling
 
@@ -99,7 +94,7 @@ stored under `gradient_forest_all_14134/`.
 | Individuals | 245 |
 | Imputed SNP responses | 14,134 |
 | Represented RAD loci | 5,776 |
-| Blocks | 32 |
+| Computational batches | 32 |
 | Parallel workers used | 6 |
 | Trees per response | 500 |
 | `mtry` | 3 |
@@ -119,13 +114,11 @@ Both raw and controlled models were completed, and block objects were combined
 after fitting.
 
 This whole-panel GF serves a different purpose from the 118-locus candidate
-GF: it is the genome-wide exploratory/nonlinear screening and priority-locus
-workflow. It should not be substituted silently for the candidate-locus GF
-when reporting the existing GF-offset landscape.
+GF: it is the genome-wide exploratory/nonlinear screening and relative-performance screening workflow. Its present and future projection sources are in `analysis/06_projection/`.
 
 ## Files inspected
 
-- `RDA-2027.R`, GF block around lines 1407--1500 and 1732--1845
+- `RDA-2027.R`, GF and projection sections (earlier source)
 - `11_Gradient_Forest_nonquarter_geoonly_ecdf_v2.rds`
 - `11_Gradient_Forest_SNP_map.csv`
 - `11_Gradient_Forest_importance.csv`

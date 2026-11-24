@@ -1,4 +1,4 @@
-#### 1. SAVED INPUTS AND PRINT SETTINGS ####
+# 1. Load packages and define shared export functions ----
 
 library(ggplot2)
 library(patchwork)
@@ -27,7 +27,7 @@ export_plate <- function(plot, stem, height, width = 178) {
          type = "cairo", compression = "lzw")
 }
 
-# Read only the plotting expressions before their original export sections.
+# Read the plot-building expressions up to the designated export command.
 read_plot_code <- function(path, stop_at, skip = character()) {
   lines <- readLines(path, warn = FALSE)
   j <- which(grepl(stop_at, lines, fixed = TRUE))[1]
@@ -51,10 +51,9 @@ read_xyz <- function(path, band = 1L) {
   x
 }
 
-#### 2. POPULATION STRUCTURE AND NONLINEAR SYNTHESIS ####
+# 2. Render population structure, linear associations and nonlinear synthesis ----
 
 if ("1" %in% tasks) {
-  # The Figure 1 section does not use vegan or terra.
   src <- readLines("scripts/restyle_main_figures_1_2.R")
   src <- src[seq_len(which(startsWith(src, "save_plate(figure_1,")) - 1L)]
   src <- src[!src %in% c("library(vegan)", "library(terra)")]
@@ -84,7 +83,7 @@ if ("2" %in% tasks) {
   for (i in 1:2) {
     d <- raw[[i]]
     lim <- max(abs(quantile(d$score[is.finite(d$score)], c(.02, .98)))) * c(-1, 1)
-    # The original plotting script uses 4 × 4 display means, anchored NW.
+    # Average raster cells in 4 × 4 blocks for the display.
     dx <- median(diff(sort(unique(d$x))))
     dy <- median(diff(sort(unique(d$y))))
     west <- min(d$x); north <- max(d$y)
@@ -116,7 +115,7 @@ if ("3" %in% tasks) {
   export_plate(f3 & print_theme, "Figure_3_nonlinear_mosaic", 226)
 }
 
-#### 3. PRESENT-DAY SAVED LANDSCAPES ####
+# 3. Render present-day genomic landscapes ----
 
 if ("4" %in% tasks) {
   landscape <- "results/nonlinear_present_landscapes"
@@ -133,8 +132,7 @@ if ("4" %in% tasks) {
   world <- map_data("world")
   samples <- read.csv(Sys.getenv("AMEIVA_ENV_FILE", "../Ameiva_Variables_rda.csv"))
   direction <- read.csv(file.path(landscape, "Figure_4_PC1_climate_direction.csv"))
-  # Reuse the original map styling and inset construction, but make the map
-  # function take the saved analytical/display data instead of terra objects.
+  # Draw the saved landscape scores and climate-correlation insets.
   lines <- readLines("scripts/finalize_Figure4_present_nonlinear_landscapes.R")
   first <- which(startsWith(lines, "  ggplot(d, aes(x, y, fill = score))"))
   last <- which(startsWith(lines, "# RDAforest has")) - 2L
@@ -160,7 +158,7 @@ if ("4" %in% tasks) {
     print_theme, "Figure_4_present_adaptive_landscapes", 158)
 }
 
-#### 4. MATCHED MID- AND LATE-CENTURY OFFSET PLATES ####
+# 4. Compare mid- and late-century genomic offset ranks ----
 
 if (any(c("5", "offset_rank", "s6_display", "s10_magnitudes") %in% tasks)) {
   x <- read.csv("results/Figure_5_genomic_offset_final/Figure_5_relative_offset_source.csv")
@@ -193,7 +191,7 @@ if (any(c("5", "offset_rank", "s6_display", "s10_magnitudes") %in% tasks)) {
     nonlinear <- (gf + rdf) / 2
     stopifnot(eq(linear, d$linear_shared_rank[shared]), eq(gf, d$GF_shared_rank[shared]),
       eq(rdf, d$RDAforest_shared_rank[shared]), eq(nonlinear, d$nonlinear_shared_rank[shared]))
-    # Verify the saved classification; plot the original column unchanged.
+    # Check agreement classes against the saved classifications.
     class_check <- rep("Intermediate", sum(shared))
     class_check[linear >= .67 & nonlinear >= .67] <- "High–high"
     class_check[linear <= .33 & nonlinear <= .33] <- "Low–low"
@@ -212,7 +210,7 @@ if (any(c("5", "offset_rank", "s6_display", "s10_magnitudes") %in% tasks)) {
   hx <- median(diff(sort(unique(late$x))))
   hy <- median(diff(sort(unique(late$y))))
   novelty_edges <- function(d) {
-    # Trace cell edges rather than interpolate the binary mask.
+    # Trace the native cells of the binary domain mask.
     k <- function(x, y) paste(round(x / hx - min(d$x) / hx),
                                round(y / hy - min(d$y) / hy))
     n <- d[d$novel, c("x", "y")]
@@ -285,8 +283,7 @@ if (any(c("5", "offset_rank", "s6_display", "s10_magnitudes") %in% tasks)) {
         q <- ggplot(d[valid, ], aes(x, y, fill = .data[[m]])) +
           geom_tile(width = hx * 1.01, height = hy * 1.01)
         if (has_novelty) {
-          # Uncoloured by magnitude: the purple-grey backdrop only makes the
-          # white contour legible where GF has no supported estimate.
+          # Mark cells without a supported GF estimate using a neutral background.
           q <- q + geom_tile(data = subset(d, novel), aes(x, y),
             inherit.aes = FALSE, width = hx * 1.01, height = hy * 1.01, fill = "#A394AC")
         }
@@ -336,14 +333,13 @@ if (any(c("5", "offset_rank", "s6_display", "s10_magnitudes") %in% tasks)) {
     d <- late
     shared <- d$shared_valid
     filled <- !shared
-    # Restore the archived thin-plate GAM display ranks, not a fresh GF fit.
-    # These are the exact display values emitted by the historical S6 renderer.
+    # Read the thin-plate GAM ranks used for the late-century display.
     stopifnot(all(is.finite(d$GF_display_rank)), all(d$GF_display_rank >= 0 & d$GF_display_rank <= 1),
       identical(d$GF_display_rank[d$GF_valid], d$GF_rank[d$GF_valid]))
     d$RDA_display_rank <- d$RDA_rank
     missing_rda <- !d$RDA_valid
     if (any(missing_rda)) {
-      # Same display-only thin-plate spatial specification as the archived GF fill.
+      # Fit the same spatial smoother to display ranks if the saved values are absent.
       display_fit <- mgcv::gam(RDA_rank ~ s(x, y, bs = "tp", k = 120),
                               data = d[d$RDA_valid, ], method = "REML")
       d$RDA_display_rank[missing_rda] <- pmin(pmax(predict(display_fit,
@@ -351,8 +347,8 @@ if (any(c("5", "offset_rank", "s6_display", "s10_magnitudes") %in% tasks)) {
     }
     stopifnot(identical(d$RDA_display_rank[d$RDA_valid], d$RDA_rank[d$RDA_valid]),
       all(d$RDAforest_valid), all(is.finite(d$RDA_display_rank)))
-    # Transfer full-domain percentile positions onto the fixed shared-domain
-    # rank reference. No interpolation points enter either rank reference.
+    # Map full-domain percentile positions onto the shared-domain reference;
+    # interpolated display values do not enter either rank calculation.
     on_shared_scale <- function(original, completed, reference) {
       ans <- reference
       ans[filled] <- approx(original[shared], reference[shared],
@@ -401,7 +397,7 @@ if (any(c("5", "offset_rank", "s6_display", "s10_magnitudes") %in% tasks)) {
   }
 }
 
-#### 5. SUPPLEMENTARY PLATES WITH IDENTIFIED SAVED INPUTS ####
+# 5. Render supplementary structure and demographic figures ----
 
 if ("S1" %in% tasks) {
   full <- read.csv(file.path(root, "04_PCA_14134_scores.csv"))
@@ -422,7 +418,7 @@ if ("S1" %in% tasks) {
 }
 
 if ("demography" %in% tasks) {
-  # This script reads existing likelihoods and Stairway summary tables only.
+  # Read TreeMix likelihoods and Stairway Plot summary tables.
   e <- new.env()
   expr <- parse("code/12_demography_treemix_figures.R")
   for (item in expr) {
@@ -443,13 +439,12 @@ if ("S7" %in% tasks) {
   export_plate(p, "Supplement_controlled_GF_importance_stability", 107)
 }
 
-#### 6. DIRECTIONALITY IS A DISTINCT PLATE, NOT THE FIVE-PANEL FIGURE 2 ####
+# 6. Render the signed candidate-directionality figure ----
 
 if ("directionality" %in% tasks) {
   Sys.setenv(AMEIVA_DEVELOPMENT_DIR = Sys.getenv("AMEIVA_DEVELOPMENT_DIR",
     "../Beyond-Generalism-development/candidate_geography_directionality"), AMEIVA_PROJECT_DIR = project)
   source_v5 <- file.path(Sys.getenv("AMEIVA_DEVELOPMENT_DIR"), "07_candidate_directionality_figure_v5.R")
-  # The original drawing function uses grid viewports. Keep all four panels.
   draw <- read_plot_code(source_v5, "pdf_file <-")
   paths <- file.path(out, paste0("Supplement_candidate_directionality", c(".pdf", ".png", ".tiff")))
   stopifnot(!any(file.exists(paths)))
@@ -461,7 +456,7 @@ if ("directionality" %in% tasks) {
   draw(); dev.off()
 }
 
-#### 7. SAVED STRUCTURE AND CANDIDATE DIAGNOSTICS ####
+# 7. Render structure and candidate diagnostics ----
 
 if ("diagnostics" %in% tasks) {
   ent <- read.csv(file.path(root, "03_sNMF_cross_entropy_summary.csv"))
@@ -517,7 +512,7 @@ if ("diagnostics" %in% tasks) {
     "Supplement_linear_consensus_K_diagnostics", 105)
 }
 
-#### 8. LOCUS-SPECIFIC FREQUENCY PLATES ####
+# 8. Plot locus-specific allele-frequency profiles ----
 
 if ("frequency" %in% tasks) {
   d <- read.csv(file.path(root, "11_164_RDA_LFMM2_locality_allele_frequency_environment.csv"))
@@ -543,7 +538,7 @@ if ("frequency" %in% tasks) {
   }
 }
 
-#### 9. OFFSET MAGNITUDES AND RDAFOREST DIMENSIONAL SENSITIVITY ####
+# 9. Plot offset magnitudes and RDAforest dimensional sensitivity ----
 
 if ("offset_supplement" %in% tasks) {
   src <- "results/figures/RDA-2027-14134/Table_S_RDAforest_pcs8_pcs15_pixels.csv"

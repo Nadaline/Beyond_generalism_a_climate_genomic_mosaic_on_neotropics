@@ -1,10 +1,5 @@
-###############################################################################
-# PRESENT-DAY NONLINEAR GENOMIC LANDSCAPES — POST-PROCESSING ONLY
-# Reuses completed controlled GF blocks and final saved RDAforest predictions.
-# No forest, jackknife, candidate screen, fold, or RDA is refitted.
-###############################################################################
 
-#### 1. PACKAGES, PATHS AND CURRENT OBJECT LINEAGE ####
+# 1. Load packages, fitted models and present-day climate ----
 
 library(terra)
 library(ggplot2)
@@ -45,11 +40,10 @@ lineage <- c(
 )
 writeLines(lineage, file.path(out, "nonlinear_present_landscape_object_audit.txt"))
 
-#### 2. CONTROLLED GF TRANSFORMATION OF PRESENT-DAY CLIMATE ####
+# 2. Transform present climate using controlled Gradient Forest curves ----
 
-# Each block has the same ten ECDF predictors and a different SNP subset. The
-# mean of its already fitted cumulative-importance curves is a post-processing
-# summary of the whole controlled 14,134-SNP GF panel; no model is fit here.
+# Average cumulative importance across 32 batches of the full 14,134-SNP model.
+# Each batch uses the same ten climatic predictors and a different subset of SNPs.
 curve_grid <- seq(0, 1, length.out = 1001)
 gf_curve_summary <- lapply(predictors, function(p) {
   y <- vapply(gf_blocks, function(f) {
@@ -63,9 +57,8 @@ gf_curve_summary <- lapply(predictors, function(p) {
 gf_curve_summary <- do.call(rbind, gf_curve_summary)
 write.csv(gf_curve_summary, file.path(out, "GF_controlled_mean_cumulative_curves.csv"), row.names = FALSE)
 
-# The raw CHELSA layers are only read and aligned to the pre-existing RDA
-# present-day template/mask. ECDFs are calculated from the original 245
-# environmental observations, matching the controlled GF input convention.
+# Match CHELSA rasters to the RDA grid; calculate empirical percentiles using
+# the same 245 sampled climate records used for model fitting.
 gf_layers <- lapply(predictors, function(p) {
   message("Transforming controlled GF predictor: ", p)
   raw <- rast(file.path(climate_dir, paste0("CHELSA_", p, "_1981-2010_SA.tif")))
@@ -87,7 +80,7 @@ gf_layers <- lapply(predictors, function(p) {
 gf_transformed <- rast(gf_layers)
 names(gf_transformed) <- predictors
 
-#### 3. VISUALIZATION-ONLY GF PCA ####
+# 3. Summarise the transformed Gradient Forest landscape with PCA ----
 
 set.seed(2027)
 gf_sample <- spatSample(gf_transformed, size = 100000, method = "random", na.rm = TRUE,
@@ -105,7 +98,7 @@ names(gf_pc2) <- "GF_landscape_PC2"
 writeRaster(gf_pc1, file.path(out, "GF_present_landscape.tif"), overwrite = TRUE)
 writeRaster(gf_pc2, file.path(out, "GF_present_landscape_PC2.tif"), overwrite = TRUE)
 
-#### 4. SAVED PRESENT-DAY RDAFOREST PREDICTIONS ####
+# 4. Summarise present-day RDAforest predictions with PCA ----
 
 signature <- read.csv(rdaforest_signature_file, check.names = FALSE)
 stopifnot(signature$selected_variables == "bio13+bio3+bio2", signature$top_pcs == 8)
@@ -117,9 +110,7 @@ present_good <- combined$goodrows[seq_len(period_n)]
 present_direct <- combined$predictions.direct[seq_len(sum(present_good)), , drop = FALSE]
 stopifnot(ncol(present_direct) == 8L, nrow(present_direct) == sum(present_good), final_fit$failed.reps == 0)
 
-# The saved spatial workflow used an unsaved visualization PCA of direct
-# predictions. Recreating that PCA from exactly the same saved prediction
-# matrix is permitted visualization-only post-processing.
+# Use the eight predicted genomic axes to describe the landscape in two dimensions.
 rdaforest_pca <- prcomp(present_direct, center = TRUE, scale. = TRUE)
 saveRDS(rdaforest_pca, file.path(out, "RDAforest_present_visualization_PCA.rds"))
 rdaforest_variance <- 100 * rdaforest_pca$sdev^2 / sum(rdaforest_pca$sdev^2)
@@ -135,7 +126,7 @@ rdaforest_pc2 <- rast(rdaforest_df[, c("x", "y", "RDAforest_landscape_PC2")], ty
 writeRaster(rdaforest_pc1, file.path(out, "RDAforest_present_landscape.tif"), overwrite = TRUE)
 writeRaster(rdaforest_pc2, file.path(out, "RDAforest_present_landscape_PC2.tif"), overwrite = TRUE)
 
-#### 5. TAIL AUDITS: SAME P10/P90 AND ONE-DEGREE LOGIC AS RDA ####
+# 5. Map the lower and upper deciles of landscape scores ----
 
 tail_audit <- function(x, name) {
   v <- values(x)
@@ -163,7 +154,7 @@ write.csv(gf_tail$summary, file.path(out, "GF_tail_audit.csv"), row.names = FALS
 write.csv(rdaforest_tail$summary, file.path(out, "RDAforest_tail_audit.csv"), row.names = FALSE)
 
 tail_grid <- function(low, high, method) {
-  # Existing RDA grid is 0.0416667 degrees; factor 24 gives the same 1-degree comparison grid.
+  # Aggregate tail indicators to fractions on a common approximately 1-degree grid.
   fact <- max(1L, round(1 / res(low)[1]))
   make <- function(x, label) {
     y <- aggregate(x, fact = fact, fun = mean, na.rm = TRUE)
@@ -174,8 +165,7 @@ tail_grid <- function(low, high, method) {
   rbind(make(low, "Lower tail (≤ P10)"), make(high, "Upper tail (≥ P90)"))
 }
 gf_tail_grid <- tail_grid(gf_tail$low, gf_tail$high, "Gradient Forest")
-# RDAforest predictions are already approximately 0.5-degree grid cells;
-# aggregate by two for the same one-degree tail-display resolution.
+# Aggregate RDAforest tail indicators to approximately the same spatial resolution.
 rda_fact <- max(1L, round(1 / res(rdaforest_tail$low)[1]))
 make_rda_grid <- function(x, label) {
   y <- aggregate(x, fact = rda_fact, fun = mean, na.rm = TRUE)
@@ -197,7 +187,7 @@ tail_map <- ggplot(all_tail_grid, aes(x, y, fill = tail_fraction)) +
   labs(x = "Longitude", y = "Latitude", title = "Geographic concentration of nonlinear landscape tails")
 ggsave(file.path(out, "Figure_nonlinear_present_tail_audit.png"), tail_map, width = 11, height = 7, dpi = 300, bg = "white")
 
-#### 6. SECONDARY AXES AND INTERNAL SPATIAL CORRELATIONS ####
+# 6. Compare secondary axes and spatial associations among models ----
 
 gf_pc2_tail <- tail_audit(gf_pc2, "Gradient Forest PC2")
 rdaforest_pc2_tail <- tail_audit(rdaforest_pc2, "RDAforest PC2")
@@ -218,7 +208,7 @@ for (i in seq_len(ncol(cmat) - 1)) for (j in (i + 1):ncol(cmat)) correlation_out
              absolute_spearman_rho = abs(cmat[i, j]), common_cells = nrow(correlation_data)))
 write.csv(correlation_out, file.path(out, "nonlinear_present_landscape_spatial_correlations.csv"), row.names = FALSE)
 
-#### 7. TWO-PANEL MANUSCRIPT-STYLE MAP ####
+# 7. Plot present-day nonlinear landscapes ----
 
 display_map <- function(x, title, legend_label) {
   q <- quantile(values(x), c(.02, .98), na.rm = TRUE)
@@ -247,7 +237,7 @@ figure <- p_gf + p_rdaforest + plot_annotation(tag_levels = "a") &
 ggsave(file.path(out, "Figure_present_GF_RDAforest_v1.pdf"), figure, width = 12, height = 6.5, device = cairo_pdf)
 ggsave(file.path(out, "Figure_present_GF_RDAforest_v1.png"), figure, width = 12, height = 6.5, dpi = 600, bg = "white")
 
-#### 8. NOTES FOR MANUAL REGIONAL INTERPRETATION ####
+# 8. Export regional summaries and model provenance ----
 
 audit <- c(
   "PRESENT-DAY NONLINEAR LANDSCAPE AUDIT", "",

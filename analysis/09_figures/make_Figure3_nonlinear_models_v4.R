@@ -1,9 +1,5 @@
-###############################################################################
-# FIGURE 3 V4 — SYNTHESIS OF NONLINEAR CLIMATE-ASSOCIATED GENOMIC PATTERNS
-# Visual revision only. All values come from completed GF and RDAforest outputs.
-###############################################################################
 
-#### 1. READ SAVED RESULTS ####
+# 1. Read fitted GF summaries, locus curves and RDAforest importance ----
 
 library(ggplot2)
 library(patchwork)
@@ -27,7 +23,7 @@ predictors <- c("BIO1", "BIO2", "BIO3", "BIO4", "BIO5", "BIO6", "BIO7", "BIO12",
 high <- locus[locus$GF_high, ]
 stopifnot(nrow(locus) == 14134L, nrow(high) == 707L)
 
-#### 2. MANUSCRIPT VISUAL IDENTITY ####
+# 2. Define figure colours and theme ----
 
 deep_purple <- "#32134F"
 purple <- "#5B2A86"
@@ -48,7 +44,7 @@ panel_theme <- theme_classic(base_size = 9.5) +
     legend.text = element_text(size = 8)
   )
 
-#### 3. PANEL A — AGGREGATE GF PREDICTOR IMPORTANCE ####
+# 3. Summarise predictor importance across Gradient Forest batches ----
 
 gf_summary <- aggregate(importance ~ predictor, gf_importance,
                         function(x) c(mean = mean(x), sd = sd(x)))
@@ -68,7 +64,7 @@ p_a <- ggplot(gf_summary, aes(reorder(predictor, mean_importance), mean_importan
        x = NULL, y = "Mean GF importance") +
   panel_theme
 
-#### 4. PANEL B — 707-LOCUS CLIMATIC MOSAIC ####
+# 4. Count high-performing loci by predictor and turnover position ----
 
 high$turnover_position <- ifelse(high$peak_split_environment_quantile < .33, "Low",
                                  ifelse(high$peak_split_environment_quantile <= .67,
@@ -79,8 +75,7 @@ mosaic <- as.data.frame(table(high$top_predictor, high$turnover_position), strin
 names(mosaic) <- c("predictor", "gradient_position", "n_loci")
 mosaic$total <- ave(mosaic$n_loci, mosaic$predictor, FUN = sum)
 mosaic$predictor <- as.character(mosaic$predictor)
-# Reuse panel-a's GF-importance order so aggregate and locus-specific views can
-# be read directly against one another.
+# Use the same predictor order for the aggregate and locus-specific summaries.
 predictor_order <- as.character(gf_summary$predictor)
 mosaic$predictor <- factor(mosaic$predictor, levels = rev(predictor_order))
 bar_ends <- mosaic[match(predictor_order, mosaic$predictor), c("predictor", "total")]
@@ -99,7 +94,7 @@ p_b <- ggplot(mosaic, aes(predictor, n_loci, fill = gradient_position)) +
   panel_theme +
   theme(legend.position = "bottom", legend.box = "horizontal", legend.margin = margin(t = 3))
 
-#### 5. PANEL C — FOUR DIRECTLY EXTRACTED TURNOVER CURVES ####
+# 5. Plot four GF-only locus turnover curves ----
 
 selected_ids <- c("SNP03109", "SNP06251", "SNP07293", "SNP12662")
 selected_meta <- high[match(selected_ids, high$SNP), ]
@@ -133,8 +128,7 @@ curve_data$panel_label <- paste0(curve_data$SNP, "\n", curve_data$predictor_labe
 curve_data$panel_label <- factor(curve_data$panel_label,
                                  levels = unique(curve_data$panel_label)[match(selected_ids, unique(curve_data$SNP))])
 
-# The marker is the largest stored split improvement within the displayed
-# locus-specific top-predictor curve. It is extracted, not estimated anew.
+# Mark the split with the largest improvement in each displayed curve.
 curve_peaks <- do.call(rbind, lapply(split(curve_data, curve_data$SNP), function(d) d[which.max(d$improve), ]))
 
 p_c <- ggplot(curve_data, aes(x_raw, cumulative_fraction)) +
@@ -150,9 +144,8 @@ p_c <- ggplot(curve_data, aes(x_raw, cumulative_fraction)) +
         strip.text = element_text(face = "bold", size = 8, colour = deep_purple),
         panel.spacing = grid::unit(8, "pt"))
 
-#### 6. PANEL D — RDAFOREST CONTRIBUTION ####
+# 6. Summarise RDAforest predictor importance ----
 
-# Reverse factor storage because coord_flip() displays the final level at top.
 rdaforest$variable <- factor(toupper(rdaforest$variable), levels = c("BIO3", "BIO13", "BIO2"))
 rdaforest_mean <- aggregate(importance ~ variable, rdaforest, mean)
 p_d <- ggplot(rdaforest, aes(variable, importance)) +
@@ -165,7 +158,7 @@ p_d <- ggplot(rdaforest, aes(variable, importance)) +
        y = "Proportion of total genomic variation explained") +
   panel_theme
 
-#### 7. ASSEMBLE AND EXPORT ####
+# 7. Assemble and export the nonlinear model figure ----
 
 figure_3_v4 <- (p_a + p_d) / p_b / p_c + plot_layout(heights = c(1.25, 1.65, 2.20))
 
@@ -186,11 +179,10 @@ ggsave(file.path(manuscript_figures, "Figure_3_nonlinear_models.png"), figure_3_
 ggsave(file.path(manuscript_figures, "Figure_3_nonlinear_models.tiff"), figure_3_v4,
        width = 12, height = 13.2, dpi = 600, compression = "lzw", bg = "white")
 
-#### 8. RETAIN DETAILED VIEWS AS SUPPLEMENTARY FIGURES ####
+# 8. Export supplementary locus and turnover figures ----
 
-# The existing v2 plate retains the complete 707-locus heatmap and full
-# turnover-position scatter. The existing four-locus diagnostic plate retains
-# genotype residual and geography views. They remain supplementary, unchanged.
+# The supplementary figures show all 707 loci and the individual-level diagnostics
+# for the four illustrative SNPs.
 file.copy(file.path(followup, "Figure_3_nonlinear_models_v2.png"),
           file.path(followup, "Supplementary_Figure_GF_707_locus_detail.png"), overwrite = TRUE)
 file.copy(file.path(followup, "Figure_GF_four_spatially_represented_loci.png"),
